@@ -1,0 +1,8 @@
+.DS_Store
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+**/.angular/
+apps/ReceiptReader.Api/AppData/
+deploy/.env

@@ -1,0 +1,16 @@
+{
+  "name": "Receipt Reader",
+  "short_name": "Receipts",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8f2e8",
+  "theme_color": "#182848",
+  "description": "Scan paper receipts from your phone and extract line items.",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "48x48",
+      "type": "image/x-icon"
+    }
+  ]
+}

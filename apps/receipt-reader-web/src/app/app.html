@@ -1,0 +1,167 @@
+<main class="shell">
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Receipt Reader</p>
+      <h1>Scan receipts from your phone and extract line items.</h1>
+      <p class="lede">
+        Angular PWA uploads the photo, .NET API orchestrates the pipeline, Go OCR
+        performs the first pass, and Gemini optionally refines uncertain fields.
+      </p>
+    </div>
+    <div class="hero-panel">
+      <p class="panel-label">Pipeline</p>
+      <ol>
+        <li>Capture or upload an image</li>
+        <li>OCR and heuristic parsing</li>
+        <li>Optional Gemini refinement</li>
+        <li>Archive the receipt with confidence markers</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="grid">
+    <article class="card upload-card">
+      <div class="card-header">
+        <div>
+          <p class="card-kicker">Scan</p>
+          <h2>Upload a receipt</h2>
+        </div>
+        <span class="status-pill" [class.active]="isUploading()">
+          {{ isUploading() ? 'Uploading' : 'Idle' }}
+        </span>
+      </div>
+
+      <label class="upload-zone">
+        <input type="file" accept="image/*" capture="environment" (change)="onFileSelected($event)" />
+        <span>Tap to use the camera or choose an image from the phone</span>
+      </label>
+
+      <button type="button" class="primary-button" [disabled]="isUploading()" (click)="uploadReceipt()">
+        Send for analysis
+      </button>
+
+      <p class="status-message">{{ statusMessage() }}</p>
+
+      @if (selectedJob(); as job) {
+        <div class="job-card">
+          <p class="card-kicker">Current job</p>
+          <h3>{{ job.stage }}</h3>
+          <p>Provider: {{ job.provider }}</p>
+          <p>Started: {{ job.startedAt | date: 'short' }}</p>
+          @if (job.finishedAt) {
+            <p>Finished: {{ job.finishedAt | date: 'short' }}</p>
+          }
+        </div>
+      }
+    </article>
+
+    <article class="card">
+      <div class="card-header">
+        <div>
+          <p class="card-kicker">Archive</p>
+          <h2>Processed receipts</h2>
+        </div>
+        <button type="button" class="ghost-button" (click)="refreshArchive()">Refresh</button>
+      </div>
+
+      @if (isLoadingArchive()) {
+        <p class="empty-state">Loading archive...</p>
+      } @else if (archive().length === 0) {
+        <p class="empty-state">No receipts yet. Upload the first image to see archived results here.</p>
+      } @else {
+        <div class="archive-list">
+          @for (receipt of archive(); track receipt.id) {
+            <button type="button" class="archive-item" (click)="openReceipt(receipt.id)">
+              <div>
+                <strong>{{ receipt.merchantName || 'Unknown merchant' }}</strong>
+                <p>{{ receipt.purchaseDate || 'Date pending' }}</p>
+              </div>
+              <div class="archive-meta">
+                <span>{{ receipt.status }}</span>
+                <strong>{{ receipt.totalGross ?? '...' }} PLN</strong>
+              </div>
+            </button>
+          }
+        </div>
+      }
+    </article>
+  </section>
+
+  <section class="detail-grid">
+    <article class="card preview-card">
+      <div class="card-header">
+        <div>
+          <p class="card-kicker">Preview</p>
+          <h2>Receipt detail</h2>
+        </div>
+        @if (selectedReceipt()) {
+          <span class="status-pill active">{{ selectedReceipt()?.status }}</span>
+        }
+      </div>
+
+      @if (selectedReceipt(); as receipt) {
+        <img class="receipt-image" [src]="'http://localhost:5186' + receipt.imageUrl" alt="Uploaded receipt image" />
+        <div class="summary-grid">
+          <div>
+            <span>Merchant</span>
+            <strong>{{ receipt.receiptSummary.merchantName || 'Pending' }}</strong>
+          </div>
+          <div>
+            <span>NIP</span>
+            <strong>{{ receipt.receiptSummary.taxId || 'Pending' }}</strong>
+          </div>
+          <div>
+            <span>Date</span>
+            <strong>{{ receipt.receiptSummary.purchaseDate || 'Pending' }}</strong>
+          </div>
+          <div>
+            <span>Total</span>
+            <strong>{{ receipt.receiptSummary.totalGross ?? 'Pending' }} {{ receipt.receiptSummary.currency }}</strong>
+          </div>
+        </div>
+      } @else {
+        <p class="empty-state">Choose a receipt from the archive to inspect the extracted data.</p>
+      }
+    </article>
+
+    <article class="card result-card">
+      <div class="card-header">
+        <div>
+          <p class="card-kicker">Extraction</p>
+          <h2>Line items and OCR</h2>
+        </div>
+        @if (selectedReceipt()) {
+          <span class="confidence-pill">
+            Confidence {{ (selectedReceipt()?.confidence ?? 0) * 100 | number: '1.0-0' }}%
+          </span>
+        }
+      </div>
+
+      @if (selectedReceipt(); as receipt) {
+        <div class="items-list">
+          @for (item of receipt.items; track item.sourceLine + item.name) {
+            <div class="item-row">
+              <div>
+                <strong>{{ item.name }}</strong>
+                <p>{{ item.sourceLine }}</p>
+              </div>
+              <div class="item-pricing">
+                <span>{{ item.quantity ?? 1 }} x {{ item.unitPrice ?? item.totalPrice ?? 0 }}</span>
+                <strong>{{ item.totalPrice ?? 0 }} PLN</strong>
+              </div>
+            </div>
+          } @empty {
+            <p class="empty-state">Items will appear here when OCR parsing completes.</p>
+          }
+        </div>
+
+        <div class="ocr-box">
+          <p class="card-kicker">Raw OCR</p>
+          <pre>{{ receipt.rawOcrText || 'No OCR text yet.' }}</pre>
+        </div>
+      } @else {
+        <p class="empty-state">No receipt selected.</p>
+      }
+    </article>
+  </section>
+</main>
