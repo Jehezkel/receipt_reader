@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -322,11 +323,15 @@ func (a *app) prepareForStorage(imageBytes []byte) (prepareResponse, error) {
 		}, nil
 	}
 
-	source := toNRGBA(decoded)
-	originalBounds := source.Bounds()
-	filters := []string{"decode"}
+	originalBounds := decoded.Bounds()
+	source, orientationFilters, orientationNotes, err := decodeAndOrientReceiptImage(imageBytes)
+	if err != nil {
+		return prepareResponse{}, err
+	}
+
+	filters := append([]string{}, orientationFilters...)
 	fallbackUsed := false
-	notes := []string{}
+	notes := append([]string{}, orientationNotes...)
 
 	cropBounds, cropApplied := detectReceiptBounds(source)
 	if cropApplied {
@@ -479,7 +484,7 @@ func toLines(normalized string, variantID string, alternateTexts map[int][]strin
 }
 
 func buildOCRVariants(imageBytes []byte) ([]ocrVariantCandidate, []string, string) {
-	decoded, _, err := image.Decode(bytes.NewReader(imageBytes))
+	source, orientationFilters, orientationNotes, err := decodeAndOrientReceiptImage(imageBytes)
 	if err != nil {
 		return []ocrVariantCandidate{
 			{
@@ -494,9 +499,8 @@ func buildOCRVariants(imageBytes []byte) ([]ocrVariantCandidate, []string, strin
 		}, []string{"source-image"}, "Image preprocessing skipped because the input image could not be decoded."
 	}
 
-	source := toNRGBA(decoded)
-	filters := []string{"decode"}
-	notes := []string{}
+	filters := append([]string{}, orientationFilters...)
+	notes := append([]string{}, orientationNotes...)
 	cropBounds, cropApplied := detectReceiptBounds(source)
 	if cropApplied {
 		source = cropNRGBA(source, cropBounds)
@@ -524,6 +528,32 @@ func buildOCRVariants(imageBytes []byte) ([]ocrVariantCandidate, []string, strin
 	}
 
 	return filtered, filters, strings.Join(notes, " ")
+}
+
+func decodeAndOrientReceiptImage(imageBytes []byte) (*image.NRGBA, []string, []string, error) {
+	decoded, _, err := image.Decode(bytes.NewReader(imageBytes))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	source := toNRGBA(decoded)
+	filters := []string{"decode"}
+	notes := []string{}
+
+	if orientation, ok := readJPEGExifOrientation(imageBytes); ok && orientation != 1 {
+		source = applyExifOrientation(source, orientation)
+		filters = append(filters, fmt.Sprintf("exif-orientation-%d", orientation))
+		notes = append(notes, fmt.Sprintf("Applied EXIF orientation %d before receipt detection.", orientation))
+	}
+
+	normalized, rotationDegrees, rotated := normalizeReceiptOrientation(source)
+	if rotated {
+		source = normalized
+		filters = append(filters, fmt.Sprintf("rotate-%d", rotationDegrees))
+		notes = append(notes, fmt.Sprintf("Rotated receipt frame by %d degrees to normalize portrait layout before OCR.", rotationDegrees))
+	}
+
+	return source, filters, notes, nil
 }
 
 func buildVariant(id, variantType, section string, psm int, source *image.NRGBA, crop *image.Rectangle, threshold uint8, applyContrast bool, skipThreshold bool) ocrVariantCandidate {
@@ -568,6 +598,212 @@ func buildVariant(id, variantType, section string, psm int, source *image.NRGBA,
 		rotationDegrees: 0,
 		readability:     estimateReadability(gray),
 		imageBytes:      buffer.Bytes(),
+	}
+}
+
+func readJPEGExifOrientation(imageBytes []byte) (int, bool) {
+	if len(imageBytes) < 4 || imageBytes[0] != 0xFF || imageBytes[1] != 0xD8 {
+		return 0, false
+	}
+
+	for offset := 2; offset+4 <= len(imageBytes); {
+		if imageBytes[offset] != 0xFF {
+			offset++
+			continue
+		}
+
+		marker := imageBytes[offset+1]
+		offset += 2
+		if marker == 0xD9 || marker == 0xDA {
+			break
+		}
+
+		if offset+2 > len(imageBytes) {
+			break
+		}
+
+		segmentLength := int(binary.BigEndian.Uint16(imageBytes[offset : offset+2]))
+		if segmentLength < 2 || offset+segmentLength > len(imageBytes) {
+			break
+		}
+
+		segment := imageBytes[offset+2 : offset+segmentLength]
+		if marker == 0xE1 && len(segment) >= 6 && bytes.Equal(segment[:6], []byte("Exif\x00\x00")) {
+			return parseExifOrientation(segment[6:])
+		}
+
+		offset += segmentLength
+	}
+
+	return 0, false
+}
+
+func parseExifOrientation(tiff []byte) (int, bool) {
+	if len(tiff) < 8 {
+		return 0, false
+	}
+
+	var order binary.ByteOrder
+	switch string(tiff[:2]) {
+	case "II":
+		order = binary.LittleEndian
+	case "MM":
+		order = binary.BigEndian
+	default:
+		return 0, false
+	}
+
+	if order.Uint16(tiff[2:4]) != 42 {
+		return 0, false
+	}
+
+	ifdOffset := int(order.Uint32(tiff[4:8]))
+	if ifdOffset < 0 || ifdOffset+2 > len(tiff) {
+		return 0, false
+	}
+
+	entryCount := int(order.Uint16(tiff[ifdOffset : ifdOffset+2]))
+	for entryIndex := 0; entryIndex < entryCount; entryIndex++ {
+		entryOffset := ifdOffset + 2 + entryIndex*12
+		if entryOffset+12 > len(tiff) {
+			return 0, false
+		}
+
+		tag := order.Uint16(tiff[entryOffset : entryOffset+2])
+		if tag != 0x0112 {
+			continue
+		}
+
+		valueType := order.Uint16(tiff[entryOffset+2 : entryOffset+4])
+		valueCount := order.Uint32(tiff[entryOffset+4 : entryOffset+8])
+		if valueType != 3 || valueCount == 0 {
+			return 0, false
+		}
+
+		if valueCount == 1 {
+			value := int(order.Uint16(tiff[entryOffset+8 : entryOffset+10]))
+			return value, value >= 1 && value <= 8
+		}
+
+		valueOffset := int(order.Uint32(tiff[entryOffset+8 : entryOffset+12]))
+		if valueOffset < 0 || valueOffset+2 > len(tiff) {
+			return 0, false
+		}
+
+		value := int(order.Uint16(tiff[valueOffset : valueOffset+2]))
+		return value, value >= 1 && value <= 8
+	}
+
+	return 0, false
+}
+
+func normalizeReceiptOrientation(source *image.NRGBA) (*image.NRGBA, int, bool) {
+	candidates := []struct {
+		rotation int
+		image    *image.NRGBA
+		score    float64
+	}{
+		{rotation: 0, image: source},
+		{rotation: 90, image: rotate90NRGBA(source)},
+		{rotation: 180, image: rotate180NRGBA(source)},
+		{rotation: 270, image: rotate270NRGBA(source)},
+	}
+
+	for index := range candidates {
+		candidates[index].score = scoreReceiptOrientationCandidate(candidates[index].image)
+	}
+
+	best := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.score > best.score {
+			best = candidate
+		}
+	}
+
+	if best.rotation == 0 || best.score < candidates[0].score+0.2 {
+		return source, 0, false
+	}
+
+	return best.image, best.rotation, true
+}
+
+func scoreReceiptOrientationCandidate(source *image.NRGBA) float64 {
+	target := source
+	score := 0.0
+
+	if cropBounds, ok := detectReceiptBounds(source); ok {
+		target = cropNRGBA(source, cropBounds)
+		score += 0.9
+	} else {
+		score -= 0.2
+	}
+
+	bounds := target.Bounds()
+	aspectRatio := float64(bounds.Dy()) / float64(maxInt(1, bounds.Dx()))
+	if aspectRatio >= 1.1 {
+		score += minFloat(1.3, aspectRatio*0.55)
+	} else {
+		score -= 0.75
+	}
+
+	centroidY, inkDensity, ok := estimateInkCentroid(target)
+	if ok {
+		score += 0.5 - centroidY
+		score += minFloat(0.25, inkDensity*3.5)
+	}
+
+	return score
+}
+
+func estimateInkCentroid(source *image.NRGBA) (float64, float64, bool) {
+	borderBrightness := averageBorderBrightness(source)
+	inkThreshold := minFloat(borderBrightness-92, 160)
+	if inkThreshold < 110 {
+		inkThreshold = 110
+	}
+
+	bounds := source.Bounds()
+	var yTotal float64
+	inkPixels := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			if pixelBrightness(source.NRGBAAt(x, y)) > inkThreshold {
+				continue
+			}
+
+			yTotal += float64(y - bounds.Min.Y)
+			inkPixels++
+		}
+	}
+
+	if inkPixels < maxInt(120, bounds.Dx()*bounds.Dy()/900) {
+		return 0, 0, false
+	}
+
+	height := maxInt(1, bounds.Dy()-1)
+	centroidY := (yTotal / float64(inkPixels)) / float64(height)
+	inkDensity := float64(inkPixels) / float64(maxInt(1, bounds.Dx()*bounds.Dy()))
+	return centroidY, inkDensity, true
+}
+
+func applyExifOrientation(source *image.NRGBA, orientation int) *image.NRGBA {
+	switch orientation {
+	case 2:
+		return flipHorizontalNRGBA(source)
+	case 3:
+		return rotate180NRGBA(source)
+	case 4:
+		return flipVerticalNRGBA(source)
+	case 5:
+		return transposeNRGBA(source)
+	case 6:
+		return rotate90NRGBA(source)
+	case 7:
+		return transverseNRGBA(source)
+	case 8:
+		return rotate270NRGBA(source)
+	default:
+		return source
 	}
 }
 
@@ -1332,6 +1568,90 @@ func cropNRGBA(source *image.NRGBA, rect image.Rectangle) *image.NRGBA {
 	rect = rect.Intersect(source.Bounds())
 	target := image.NewNRGBA(image.Rect(0, 0, rect.Dx(), rect.Dy()))
 	draw.Draw(target, target.Bounds(), source, rect.Min, draw.Src)
+	return target
+}
+
+func rotate90NRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dy(), bounds.Dx()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(bounds.Max.Y-1-y, x-bounds.Min.X, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func rotate180NRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(bounds.Max.X-1-x, bounds.Max.Y-1-y, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func rotate270NRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dy(), bounds.Dx()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(y-bounds.Min.Y, bounds.Max.X-1-x, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func flipHorizontalNRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(bounds.Max.X-1-x, y-bounds.Min.Y, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func flipVerticalNRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dx(), bounds.Dy()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(x-bounds.Min.X, bounds.Max.Y-1-y, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func transposeNRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dy(), bounds.Dx()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(y-bounds.Min.Y, x-bounds.Min.X, source.NRGBAAt(x, y))
+		}
+	}
+
+	return target
+}
+
+func transverseNRGBA(source *image.NRGBA) *image.NRGBA {
+	bounds := source.Bounds()
+	target := image.NewNRGBA(image.Rect(0, 0, bounds.Dy(), bounds.Dx()))
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			target.SetNRGBA(bounds.Max.Y-1-y, bounds.Max.X-1-x, source.NRGBAAt(x, y))
+		}
+	}
+
 	return target
 }
 
