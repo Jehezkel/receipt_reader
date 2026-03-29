@@ -366,6 +366,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             Section = "items",
             SourceLine = combinedLine,
             SourceLines = candidateLines.Select(line => line.RawText).ToArray(),
+            SourceLineNumbers = candidateLines.Select(line => line.LineNumber).Distinct().ToArray(),
             EvidenceLines = evidenceLines,
             RecognitionHints = recognitionHints,
             WasReconstructedFromMultipleLines = candidateLines.Count > 1,

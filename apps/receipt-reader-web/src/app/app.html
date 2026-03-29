@@ -1,11 +1,11 @@
-<main class="shell">
-  <section class="hero">
-    <div class="hero-copy">
+<main class="app-shell">
+  <section class="intro">
+    <div class="intro-copy">
       <p class="eyebrow">Receipt Reader</p>
-      <h1>Scan receipts from your phone and extract line items.</h1>
+      <h1>Mobile review flow for receipts that need a human touch.</h1>
       <p class="lede">
-        Angular PWA uploads the photo, .NET API orchestrates the pipeline, Go OCR
-        performs the first pass, and Gemini optionally refines uncertain fields.
+        Scan from the phone, browse archived receipts, then verify the fields that OCR was unsure
+        about with a direct reference back to the photo.
       </p>
       <div class="hero-badges" aria-label="Product highlights">
         <span>Mobile capture</span>
@@ -13,6 +13,7 @@
         <span>Audit-ready archive</span>
       </div>
     </div>
+
     <div class="hero-panel">
       <div class="panel-topline">
         <p class="panel-label">Pipeline</p>
@@ -22,285 +23,457 @@
       <ol>
         <li>Capture or upload an image</li>
         <li>OCR and heuristic parsing</li>
-        <li>Optional Gemini refinement</li>
-        <li>Archive the receipt with confidence markers</li>
+        <li>AI or repair assists uncertain receipts</li>
+        <li>Human review finalizes the archive</li>
       </ol>
-      <p class="panel-note">Built to feel like a compact control room, not a generic upload form.</p>
+      <p class="panel-note">Built to feel like a compact mobile workflow, not a debug dashboard.</p>
     </div>
-  </section>
 
-  <section class="grid">
-    <article class="card upload-card">
-      <div class="card-header">
-        <div>
-          <p class="card-kicker">Scan</p>
-          <h2>Upload a receipt</h2>
-        </div>
-        <span class="status-pill" [class.active]="isUploading()">
-          {{ isUploading() ? 'Uploading' : 'Idle' }}
-        </span>
-      </div>
-
-      <label class="upload-zone">
-        <input type="file" accept="image/*" capture="environment" (change)="onFileSelected($event)" />
-        <span class="upload-zone-title">Drop in a receipt frame</span>
-        <span class="upload-zone-copy">Tap to use the camera or choose an image from the phone</span>
-      </label>
-
-      <button type="button" class="primary-button" [disabled]="isUploading()" (click)="uploadReceipt()">
-        <span>Send for analysis</span>
-        <span class="button-arrow">↗</span>
-      </button>
-
-      <p class="status-message">{{ statusMessage() }}</p>
-
-      @if (selectedJob(); as job) {
-        <div class="job-card">
-          <p class="card-kicker">Current job</p>
-          <h3>{{ job.stage }}</h3>
-          <p>Provider: {{ job.provider }}</p>
-          <p>Started: {{ job.startedAt | date: 'short' }}</p>
-          @if (job.finishedAt) {
-            <p>Finished: {{ job.finishedAt | date: 'short' }}</p>
-          }
-        </div>
-      }
-    </article>
-
-    <article class="card">
-      <div class="card-header">
-        <div>
-          <p class="card-kicker">Archive</p>
-          <h2>Processed receipts</h2>
-        </div>
-        <button type="button" class="ghost-button" (click)="refreshArchive()">
-          <span>Refresh</span>
-          <span class="button-arrow">⟲</span>
-        </button>
-      </div>
-
-      @if (isLoadingArchive()) {
-        <p class="empty-state">Loading archive...</p>
-      } @else if (archive().length === 0) {
-        <p class="empty-state">No receipts yet. Upload the first image to see archived results here.</p>
-      } @else {
-        <div class="archive-list">
-          @for (receipt of archive(); track receipt.id) {
-            <button type="button" class="archive-item" (click)="openReceipt(receipt.id)">
-              <div>
-                <strong>{{ receipt.merchantName || 'Unknown merchant' }}</strong>
-                <p>{{ receipt.purchaseDate || 'Date pending' }}</p>
-              </div>
-              <div class="archive-meta">
-                <span [class.review-text]="receipt.needsReview">{{ formatStatus(receipt.status) }}</span>
-                <span class="consistency-chip" [class.review-chip]="receipt.needsReview">{{ receipt.consistencyStatus }}</span>
-                <strong>{{ receipt.totalGross ?? '...' }} PLN</strong>
-              </div>
-            </button>
-          }
-        </div>
-      }
-    </article>
-  </section>
-
-  <section class="detail-grid">
-    <article class="card preview-card">
-      <div class="card-header">
-        <div>
-          <p class="card-kicker">Preview</p>
-          <h2>Receipt detail</h2>
-        </div>
-        @if (selectedReceipt()) {
-          <span class="status-pill" [class.active]="!selectedReceipt()?.consistency?.needsReview" [class.review-pill]="selectedReceipt()?.consistency?.needsReview">
-            {{ selectedReceipt()?.consistency?.needsReview ? 'Wymaga weryfikacji' : selectedReceipt()?.status }}
-          </span>
+    <div class="phone-frame">
+      <header class="phone-topbar">
+        @if (screen() !== 'list') {
+          <button type="button" class="icon-button" (click)="screen() === 'review' ? cancelReview() : backToList()">
+            Back
+          </button>
+        } @else {
+          <span class="signal-dot"></span>
         }
-      </div>
 
-      @if (selectedReceipt(); as receipt) {
-        <img class="receipt-image" [src]="receipt.imageUrl" alt="Uploaded receipt image" />
-        <div class="summary-grid">
-          <div>
-            <span>Merchant</span>
-            <strong>{{ receipt.receiptSummary.merchantName || 'Pending' }}</strong>
-          </div>
-          <div>
-            <span>NIP</span>
-            <strong>{{ receipt.receiptSummary.taxId || 'Pending' }}</strong>
-          </div>
-          <div>
-            <span>Date</span>
-            <strong>{{ receipt.receiptSummary.purchaseDate || 'Pending' }}</strong>
-          </div>
-          <div>
-            <span>Total</span>
-            <strong>{{ receipt.receiptSummary.totalGross ?? 'Pending' }} {{ receipt.receiptSummary.currency }}</strong>
-          </div>
-        </div>
+        <strong>{{ phoneTitle() }}</strong>
+        <span class="status-chip" [class.status-chip--busy]="isUploading() || isSavingReview()">
+          {{ isUploading() ? 'Uploading' : isSavingReview() ? 'Saving' : 'Live' }}
+        </span>
+      </header>
 
-        <div class="consistency-panel" [class.needs-review]="receipt.consistency.needsReview">
-          <div>
-            <span>Declared total</span>
-            <strong>{{ receipt.consistency.declaredTotal ?? 'Pending' }} PLN</strong>
-          </div>
-          <div>
-            <span>Items total</span>
-            <strong>{{ getItemsTotal(receipt) ?? 'Pending' }} PLN</strong>
-          </div>
-          <div>
-            <span>Difference</span>
-            <strong>{{ receipt.consistency.differenceToDeclaredTotal ?? 'n/a' }} PLN</strong>
-          </div>
-          <div>
-            <span>Status</span>
-            <strong>{{ receipt.consistency.consistencyStatus }}</strong>
-          </div>
-        </div>
+      <section class="phone-body">
+        @if (screen() === 'list') {
+          <section class="screen">
+            <article class="hero-card">
+              <p class="card-kicker">Scan</p>
+              <h2>New receipt</h2>
+              <label class="upload-zone">
+                <input type="file" accept="image/*" capture="environment" (change)="onFileSelected($event)" />
+                <span>Tap to open camera or choose a photo from the gallery</span>
+              </label>
+              <button type="button" class="primary-button" [disabled]="isUploading()" (click)="uploadReceipt()">
+                Send for analysis
+              </button>
+              <p class="status-message">{{ statusMessage() }}</p>
 
-        <div class="consistency-panel">
-          <div>
-            <span>Payments total</span>
-            <strong>{{ receipt.receiptSummary.paymentsTotal ?? 'n/a' }} PLN</strong>
-          </div>
-          <div>
-            <span>VAT buckets</span>
-            <strong>{{ receipt.receiptSummary.vatBreakdownTotal ?? 'n/a' }} PLN</strong>
-          </div>
-          <div>
-            <span>OCR variant</span>
-            <strong>{{ receipt.selectedOcrVariant || 'n/a' }}</strong>
-          </div>
-          <div>
-            <span>Total evidence</span>
-            <strong>{{ receipt.totalEvidence || 'n/a' }}</strong>
-          </div>
-        </div>
-
-        @if (receipt.payments.length > 0) {
-          <div class="ocr-box">
-            <p class="card-kicker">Payments</p>
-            <div class="ocr-line-list">
-              @for (payment of receipt.payments; track payment.sourceLine) {
-                <div class="ocr-line-row">
-                  <span class="mini-pill">{{ payment.method }}</span>
-                  <div>
-                    <strong>{{ payment.amount ?? 'n/a' }} PLN</strong>
-                    <p>{{ payment.sourceLine }}</p>
-                  </div>
+              @if (selectedJob(); as job) {
+                <div class="inline-job">
+                  <strong>{{ job.stage }}</strong>
+                  <span>{{ job.provider }}</span>
+                  <span>{{ job.startedAt | date: 'shortTime' }}</span>
                 </div>
               }
-            </div>
-          </div>
+            </article>
+
+            <section class="screen-section">
+              <div class="section-heading">
+                <div>
+                  <p class="card-kicker">Archive</p>
+                  <h2>Processed receipts</h2>
+                </div>
+                <button type="button" class="ghost-button" (click)="refreshArchive()">Refresh</button>
+              </div>
+
+              @if (isLoadingArchive()) {
+                <p class="empty-state">Loading archive...</p>
+              } @else if (archive().length === 0) {
+                <p class="empty-state">No receipts yet. Scan the first one to start the archive.</p>
+              } @else {
+                <div class="receipt-list">
+                  @for (receipt of archive(); track trackArchive($index, receipt)) {
+                    <article class="receipt-card" [class.receipt-card--active]="isReceiptSelected(receipt.id)">
+                      <button type="button" class="receipt-card-main" (click)="openReceipt(receipt.id)">
+                        <div class="receipt-card-copy">
+                          <strong>{{ receipt.merchantName || 'Unknown merchant' }}</strong>
+                          <span>{{ receipt.purchaseDate || 'Date pending' }}</span>
+                          <span class="minor-text">{{ receipt.createdAt | date: 'MMM d, HH:mm' }}</span>
+                        </div>
+                        <div class="receipt-card-meta">
+                          <span class="review-badge" [class.review-badge--warn]="receipt.needsReview">
+                            {{ receipt.needsReview ? 'Review' : 'Ready' }}
+                          </span>
+                          <strong>{{ receipt.totalGross ?? '...' }} PLN</strong>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        class="icon-button icon-button--danger"
+                        [disabled]="deleting(receipt.id)"
+                        (click)="deleteReceipt(receipt.id, $event)">
+                        {{ deleting(receipt.id) ? '...' : 'Delete' }}
+                      </button>
+                    </article>
+                  }
+                </div>
+              }
+            </section>
+          </section>
         }
 
-        @if (receipt.aiWasTriggeredBecause) {
-          <div class="ocr-box">
-            <p class="card-kicker">AI trigger</p>
-            <p>{{ receipt.aiWasTriggeredBecause }}</p>
-          </div>
-        }
-      } @else {
-        <p class="empty-state">Choose a receipt from the archive to inspect the extracted data.</p>
-      }
-    </article>
-
-    <article class="card result-card">
-      <div class="card-header">
-        <div>
-          <p class="card-kicker">Extraction</p>
-          <h2>Line items and OCR</h2>
-        </div>
-        @if (selectedReceipt()) {
-          <span class="confidence-pill">
-            Confidence {{ (selectedReceipt()?.confidence ?? 0) * 100 | number: '1.0-0' }}%
-          </span>
-        }
-      </div>
-
-      @if (selectedReceipt(); as receipt) {
-        <div class="items-list">
-          @for (item of receipt.items; track item.sourceLine + item.name) {
-            <div class="item-row" [class.item-warning]="item.parseWarnings.length > 0">
+        @if (screen() === 'detail' && selectedReceipt(); as receipt) {
+          <section class="screen">
+            <article class="detail-hero">
               <div>
-                <strong>
-                  {{ item.name }}
-                  @if (item.wasAiCorrected) {
-                    <span class="mini-pill ai-pill">AI corrected</span>
-                  }
-                </strong>
-                @for (sourceLine of item.sourceLines; track sourceLine) {
-                  <p>{{ sourceLine }}</p>
-                }
-                @if (item.evidenceLines.length > 0) {
-                  <p>Evidence: {{ item.evidenceLines.join(' | ') }}</p>
-                }
-                @if (item.recognitionHints.length > 0) {
-                  <p>Hints: {{ item.recognitionHints.join(', ') }}</p>
-                }
-                @for (warning of item.parseWarnings; track warning) {
-                  <p class="warning-text">{{ warning }}</p>
-                }
+                <p class="card-kicker">Receipt</p>
+                <h2>{{ merchantName(receipt) }}</h2>
+                <p class="minor-text">{{ receipt.createdAt | date: 'medium' }}</p>
               </div>
-              <div class="item-pricing">
-                <span>{{ item.quantity ?? 1 }} x {{ item.unitPrice ?? item.totalPrice ?? 0 }}</span>
-                <strong>{{ item.totalPrice ?? 0 }} PLN</strong>
-                @if (item.discount) {
-                  <span>Discount: {{ item.discount }} PLN</span>
-                }
-                <span class="confidence-inline">{{ item.confidence * 100 | number: '1.0-0' }}%</span>
+              <div class="detail-actions">
+                <span class="review-badge" [class.review-badge--warn]="receipt.consistency.needsReview">
+                  {{ receipt.consistency.needsReview ? 'Needs review' : 'Verified enough' }}
+                </span>
+                <button type="button" class="icon-button icon-button--danger" (click)="deleteReceipt(receipt.id, $event)">
+                  Delete
+                </button>
               </div>
+            </article>
+
+            <div class="receipt-photo-card">
+              <img class="receipt-photo" [src]="receipt.imageUrl" alt="Uploaded receipt image" />
             </div>
-          } @empty {
-            <p class="empty-state">Items will appear here when OCR parsing completes.</p>
-          }
-        </div>
 
-        <div class="ocr-box">
-          <p class="card-kicker">Raw OCR</p>
-          <pre>{{ receipt.rawOcrText || 'No OCR text yet.' }}</pre>
-        </div>
-
-        <div class="ocr-box">
-          <p class="card-kicker">OCR line debug</p>
-          <div class="ocr-line-list">
-            @for (line of receipt.ocrLines; track line.rawText + line.lineType) {
-              <div class="ocr-line-row">
-                <span class="mini-pill">{{ line.lineType }}</span>
+            <article class="summary-card">
+              <div class="section-heading">
                 <div>
-                  <strong>{{ line.normalizedText }}</strong>
-                  <p>{{ line.rawText }}</p>
-                  <p>Section: {{ line.section }} | Variant: {{ line.variantId }}</p>
-                  @if (line.alternateTexts.length > 0) {
-                    <p>Alternates: {{ line.alternateTexts.join(' | ') }}</p>
+                  <p class="card-kicker">Summary</p>
+                  <h2>What we read</h2>
+                </div>
+                <button type="button" class="primary-button primary-button--inline" (click)="enterReview()">
+                  Verify & update
+                </button>
+              </div>
+
+              <div class="summary-grid">
+                <div>
+                  <span>Merchant</span>
+                  <strong>{{ receipt.receiptSummary.merchantName || 'Pending' }}</strong>
+                </div>
+                <div>
+                  <span>NIP</span>
+                  <strong>{{ receipt.receiptSummary.taxId || 'Pending' }}</strong>
+                </div>
+                <div>
+                  <span>Date</span>
+                  <strong>{{ receipt.receiptSummary.purchaseDate || 'Pending' }}</strong>
+                </div>
+                <div>
+                  <span>Total</span>
+                  <strong>{{ receipt.receiptSummary.totalGross ?? 'Pending' }} {{ receipt.receiptSummary.currency }}</strong>
+                </div>
+              </div>
+
+              <div class="consistency-panel" [class.consistency-panel--warn]="receipt.consistency.needsReview">
+                <div>
+                  <span>Declared total</span>
+                  <strong>{{ receipt.consistency.declaredTotal ?? 'Pending' }} PLN</strong>
+                </div>
+                <div>
+                  <span>Items total</span>
+                  <strong>{{ getItemsTotal(receipt) ?? 'Pending' }} PLN</strong>
+                </div>
+                <div>
+                  <span>Payments total</span>
+                  <strong>{{ receipt.consistency.paymentsTotal ?? receipt.receiptSummary.paymentsTotal ?? 'n/a' }} PLN</strong>
+                </div>
+                <div>
+                  <span>Status</span>
+                  <strong>{{ receipt.consistency.consistencyStatus }}</strong>
+                </div>
+              </div>
+
+              @if (receipt.totalEvidence) {
+                <p class="info-note">Evidence: {{ receipt.totalEvidence }}</p>
+              }
+              @if (receipt.aiWasTriggeredBecause) {
+                <p class="info-note">AI trigger: {{ receipt.aiWasTriggeredBecause }}</p>
+              }
+            </article>
+
+            @if (hasPayments(receipt)) {
+              <article class="summary-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="card-kicker">Payments</p>
+                    <h2>Detected payment methods</h2>
+                  </div>
+                </div>
+
+                <div class="payment-list">
+                  @for (payment of receipt.payments; track payment.method + payment.sourceLine) {
+                    <div class="payment-card">
+                      <strong>{{ paymentLabel(payment) }}</strong>
+                      <span>{{ payment.amount ?? 'n/a' }} PLN</span>
+                      <p>{{ payment.sourceLine }}</p>
+                    </div>
                   }
                 </div>
-              </div>
-            } @empty {
-              <p class="empty-state">No OCR line debug available.</p>
+              </article>
             }
-          </div>
-        </div>
 
-        <div class="ocr-box">
-          <p class="card-kicker">OCR variants</p>
-          <div class="ocr-line-list">
-            @for (variant of receipt.ocrVariants; track variant.variantId) {
-              <div class="ocr-line-row">
-                <span class="mini-pill">{{ variant.section }}</span>
+            <article class="summary-card">
+              <div class="section-heading">
                 <div>
-                  <strong>{{ variant.variantId }} / {{ variant.variantType }}</strong>
-                  <p>PSM {{ variant.psm }} | score {{ variant.qualityScore * 100 | number: '1.0-0' }}% | readability {{ variant.estimatedReadabilityScore * 100 | number: '1.0-0' }}%</p>
-                  <p>{{ variant.appliedFilters.join(', ') }}</p>
+                  <p class="card-kicker">Items</p>
+                  <h2>Parsed line items</h2>
+                </div>
+                <span class="review-badge">{{ formatConfidence(receipt.confidence) }}</span>
+              </div>
+
+              <div class="item-list">
+                @for (item of receipt.items; track trackItem($index, item)) {
+                  <button type="button" class="item-card" [class.item-card--warn]="item.parseWarnings.length > 0 || item.wasAiCorrected" (click)="focusItem(item)">
+                    <div>
+                      <strong>{{ item.name }}</strong>
+                      <p>{{ item.quantity ?? 1 }} x {{ item.unitPrice ?? item.totalPrice ?? 0 }} PLN</p>
+                      @if (item.parseWarnings.length > 0) {
+                        <p class="warning-text">{{ item.parseWarnings[0] }}</p>
+                      }
+                    </div>
+                    <div class="item-card-meta">
+                      <strong>{{ item.totalPrice ?? 0 }} PLN</strong>
+                      <span>{{ formatConfidence(item.confidence) }}</span>
+                    </div>
+                  </button>
+                } @empty {
+                  <p class="empty-state">Items will appear here when OCR parsing completes.</p>
+                }
+              </div>
+            </article>
+
+            <details class="debug-panel">
+              <summary>OCR & debug</summary>
+              <div class="debug-stack">
+                <div class="ocr-box">
+                  <p class="card-kicker">Raw OCR</p>
+                  <pre>{{ receipt.rawOcrText || 'No OCR text yet.' }}</pre>
+                </div>
+
+                <div class="ocr-box">
+                  <p class="card-kicker">OCR lines</p>
+                  <div class="ocr-line-list">
+                    @for (line of receipt.ocrLines; track trackOcrLine($index, line)) {
+                      <div class="ocr-line-row">
+                        <span class="line-tag">{{ line.lineType }}</span>
+                        <div>
+                          <strong>{{ line.normalizedText }}</strong>
+                          <p>{{ line.rawText }}</p>
+                        </div>
+                      </div>
+                    }
+                  </div>
                 </div>
               </div>
-            } @empty {
-              <p class="empty-state">No OCR variants recorded.</p>
-            }
-          </div>
-        </div>
-      } @else {
-        <p class="empty-state">No receipt selected.</p>
-      }
-    </article>
+            </details>
+          </section>
+        }
+
+        @if (screen() === 'review' && selectedReceipt(); as receipt) {
+          <section class="screen">
+            <article class="review-headline">
+              <div>
+                <p class="card-kicker">Review</p>
+                <h2>Verify fields the parser was unsure about</h2>
+              </div>
+              <button type="button" class="primary-button primary-button--inline" [disabled]="isSavingReview()" (click)="saveReview()">
+                {{ isSavingReview() ? 'Saving...' : 'Save changes' }}
+              </button>
+            </article>
+
+            <article class="review-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="card-kicker">System suggestions</p>
+                  <h2>Suggested values</h2>
+                </div>
+                <span class="review-badge" [class.review-badge--warn]="receipt.consistency.needsReview">
+                  {{ receipt.consistency.needsReview ? 'Attention needed' : 'Mostly stable' }}
+                </span>
+              </div>
+
+              <div class="suggestion-list">
+                @for (suggestion of getReviewSuggestions(); track suggestion.key) {
+                  <button type="button" class="suggestion-card" [class.suggestion-card--warn]="suggestion.needsAttention" (click)="focusSuggestion(suggestion.key)">
+                    <div>
+                      <strong>{{ suggestion.label }}</strong>
+                      <p>Current: {{ suggestion.currentValue }}</p>
+                      <p>OCR: {{ suggestion.suggestedValue }}</p>
+                    </div>
+                    <span>{{ suggestion.status }}</span>
+                  </button>
+                }
+              </div>
+            </article>
+
+            <article class="review-panel">
+              <p class="card-kicker">Edit summary</p>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Merchant</span>
+                  <input type="text" [(ngModel)]="reviewDraft()!.summary.merchantName" [ngModelOptions]="{ standalone: true }" />
+                </label>
+                <label class="field">
+                  <span>NIP</span>
+                  <input type="text" [(ngModel)]="reviewDraft()!.summary.taxId" [ngModelOptions]="{ standalone: true }" />
+                </label>
+                <label class="field">
+                  <span>Date</span>
+                  <input type="date" [(ngModel)]="reviewDraft()!.summary.purchaseDate" [ngModelOptions]="{ standalone: true }" />
+                </label>
+                <label class="field">
+                  <span>Total</span>
+                  <input type="text" inputmode="decimal" [(ngModel)]="reviewDraft()!.summary.totalGross" [ngModelOptions]="{ standalone: true }" />
+                </label>
+              </div>
+            </article>
+
+            <article class="review-panel">
+              <div class="section-heading">
+                <div>
+                  <p class="card-kicker">Problem items</p>
+                  <h2>Items flagged for review</h2>
+                </div>
+                <button type="button" class="ghost-button" (click)="addDraftItem()">Add item</button>
+              </div>
+
+              @if (getProblemItems(receipt).length > 0) {
+                <div class="problem-list">
+                  @for (item of getProblemItems(receipt); track trackItem($index, item)) {
+                    <button type="button" class="problem-card" (click)="focusItem(item)">
+                      <strong>{{ item.name }}</strong>
+                      <p>
+                        @if (item.parseWarnings.length > 0) {
+                          {{ item.parseWarnings[0] }}
+                        } @else if (item.wasAiCorrected) {
+                          AI corrected this item
+                        } @else {
+                          Low confidence item
+                        }
+                      </p>
+                    </button>
+                  }
+                </div>
+              } @else {
+                <p class="empty-state">No item-level warnings right now. You can still review or add items manually.</p>
+              }
+
+              <div class="draft-list">
+                @for (item of reviewDraft()!.items; track trackItem($index, item)) {
+                  <article class="draft-card">
+                    <div class="draft-card-header">
+                      <strong>{{ item.name || 'New item' }}</strong>
+                      <div class="draft-card-actions">
+                        <button type="button" class="ghost-button ghost-button--small" (click)="focusItem(item)">Show on photo</button>
+                        <button type="button" class="ghost-button ghost-button--small ghost-button--danger" (click)="removeDraftItem($index)">Remove</button>
+                      </div>
+                    </div>
+
+                    <div class="form-grid form-grid--items">
+                      <label class="field">
+                        <span>Name</span>
+                        <input type="text" [(ngModel)]="item.name" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                      <label class="field">
+                        <span>Qty</span>
+                        <input type="text" inputmode="decimal" [(ngModel)]="item.quantity" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                      <label class="field">
+                        <span>Unit price</span>
+                        <input type="text" inputmode="decimal" [(ngModel)]="item.unitPrice" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                      <label class="field">
+                        <span>Total</span>
+                        <input type="text" inputmode="decimal" [(ngModel)]="item.totalPrice" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                      <label class="field">
+                        <span>Discount</span>
+                        <input type="text" inputmode="decimal" [(ngModel)]="item.discount" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                      <label class="field">
+                        <span>VAT</span>
+                        <input type="text" [(ngModel)]="item.vatRate" [ngModelOptions]="{ standalone: true }" />
+                      </label>
+                    </div>
+
+                    @if (item.sourceLines.length > 0 || item.repairReason) {
+                      <div class="draft-footnote">
+                        @if (item.sourceLines.length > 0) {
+                          <p>OCR source: {{ item.sourceLines.join(' | ') }}</p>
+                        }
+                        @if (item.repairReason) {
+                          <p>Repair note: {{ item.repairReason }}</p>
+                        }
+                      </div>
+                    }
+                  </article>
+                }
+              </div>
+            </article>
+
+            <article class="review-panel review-panel--reference">
+              <div class="section-heading">
+                <div>
+                  <p class="card-kicker">Photo reference</p>
+                  <h2>{{ activeReference()?.title || 'Tap a field or item to highlight its OCR area' }}</h2>
+                </div>
+                @if (activeReference()) {
+                  <span class="minor-text">{{ activeReference()?.subtitle }}</span>
+                }
+              </div>
+
+              <div class="reference-photo-wrap">
+                <img class="receipt-photo" [src]="receipt.imageUrl" alt="Uploaded receipt image" />
+
+                @if (referenceBoxes().length > 0) {
+                  <svg
+                    class="reference-overlay"
+                    preserveAspectRatio="none"
+                    [attr.viewBox]="'0 0 ' + overlaySize().width + ' ' + overlaySize().height">
+                    @for (reference of referenceBoxes(); track reference.lineNumber) {
+                      <rect
+                        class="reference-box"
+                        [attr.x]="reference.box.x"
+                        [attr.y]="reference.box.y"
+                        [attr.width]="reference.box.width"
+                        [attr.height]="reference.box.height"></rect>
+                    }
+                  </svg>
+                }
+              </div>
+
+              @if (activeReference()) {
+                <div class="reference-copy">
+                  @if (activeReference()?.sourceLines?.length) {
+                    @for (line of activeReference()!.sourceLines; track line) {
+                      <p>{{ line }}</p>
+                    }
+                  } @else {
+                    <p>No OCR box for this field. Use the source values above as a fallback.</p>
+                  }
+                </div>
+              }
+            </article>
+
+            <details class="debug-panel">
+              <summary>Debug lines</summary>
+              <div class="ocr-line-list">
+                @for (line of receipt.ocrLines; track trackOcrLine($index, line)) {
+                  <button type="button" class="ocr-line-row ocr-line-row--button" (click)="highlightOcrLine(line)">
+                    <span class="line-tag">{{ line.lineType }}</span>
+                    <div>
+                      <strong>{{ line.normalizedText }}</strong>
+                      <p>{{ line.rawText }}</p>
+                    </div>
+                  </button>
+                }
+              </div>
+            </details>
+          </section>
+        }
+      </section>
+    </div>
   </section>
 </main>

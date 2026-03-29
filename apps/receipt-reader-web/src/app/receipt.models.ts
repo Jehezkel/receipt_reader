@@ -40,6 +40,7 @@ export interface ReceiptItem {
   vatCode?: string | null;
   sourceLine: string;
   sourceLines: string[];
+  sourceLineNumbers: number[];
   evidenceLines: string[];
   recognitionHints: string[];
   wasReconstructedFromMultipleLines: boolean;
@@ -55,6 +56,13 @@ export interface ReceiptPayment {
   sourceLine: string;
 }
 
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface OcrLine {
   lineNumber: number;
   rawText: string;
@@ -66,6 +74,7 @@ export interface OcrLine {
   section: string;
   variantId: string;
   alternateTexts: string[];
+  boundingBox?: BoundingBox | null;
 }
 
 export interface OcrVariantArtifact {
@@ -73,7 +82,7 @@ export interface OcrVariantArtifact {
   variantType: string;
   section: string;
   psm: number;
-  cropBox?: { x: number; y: number; width: number; height: number } | null;
+  cropBox?: BoundingBox | null;
   rotationDegrees: number;
   appliedFilters: string[];
   estimatedReadabilityScore: number;
@@ -114,6 +123,7 @@ export interface ReceiptResponse {
   id: string;
   status: string;
   imageUrl: string;
+  imageMetadata: ReceiptImageMetadata;
   createdAt: string;
   rawOcrText: string;
   normalizedLines: string[];
@@ -122,13 +132,20 @@ export interface ReceiptResponse {
   selectedOcrVariant?: string | null;
   sectionConfidences: SectionConfidenceArtifact[];
   receiptSummary: ReceiptSummary;
+  extractedReceiptSummary: ReceiptSummary;
   consistency: ReceiptConsistencyResult;
   items: ReceiptItem[];
+  extractedItems: ReceiptItem[];
   payments: ReceiptPayment[];
   confidence: number;
   aiWasTriggeredBecause?: string | null;
   totalEvidence?: string | null;
   processingSteps: ProcessingStep[];
+}
+
+export interface ReceiptImageMetadata {
+  width: number;
+  height: number;
 }
 
 export interface JobResponse {
@@ -146,4 +163,32 @@ export interface CreateReceiptResponse {
   jobId: string;
   statusUrl: string;
   receiptUrl: string;
+}
+
+export interface UpdateReceiptRequest {
+  receiptSummary: ReceiptSummaryUpdateRequest;
+  items: ReceiptItemUpdateRequest[];
+}
+
+export interface ReceiptSummaryUpdateRequest {
+  merchantName?: string | null;
+  taxId?: string | null;
+  purchaseDate?: string | null;
+  currency: string;
+  totalGross?: number | null;
+}
+
+export interface ReceiptItemUpdateRequest {
+  name: string;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  totalPrice?: number | null;
+  discount?: number | null;
+  vatRate?: string | null;
+  sourceLine: string;
+  sourceLines: string[];
+  sourceLineNumbers: number[];
+  wasAiCorrected: boolean;
+  repairReason?: string | null;
+  candidateKind: ReceiptItem['candidateKind'];
 }

@@ -15,6 +15,7 @@ public sealed class ReceiptItem
     public string? VatCode { get; set; }
     public string SourceLine { get; set; } = string.Empty;
     public IReadOnlyList<string> SourceLines { get; set; } = [];
+    public IReadOnlyList<int> SourceLineNumbers { get; set; } = [];
     public IReadOnlyList<string> EvidenceLines { get; set; } = [];
     public IReadOnlyList<string> RecognitionHints { get; set; } = [];
     public bool WasReconstructedFromMultipleLines { get; set; }

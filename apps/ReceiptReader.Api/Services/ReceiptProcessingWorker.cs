@@ -151,7 +151,8 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                     Details = repaired.Details,
                     Timestamp = DateTimeOffset.UtcNow
                 });
-
+                receipt.ExtractedReceiptSummary = ReceiptSnapshotCloner.CloneSummary(receipt.ReceiptSummary);
+                receipt.ExtractedItems = ReceiptSnapshotCloner.CloneItems(receipt.Items);
                 receipt.Job.Stage = ProcessingStage.Completed;
                 receipt.Job.FinishedAt = DateTimeOffset.UtcNow;
                 receipt.Status = receipt.Consistency.NeedsReview

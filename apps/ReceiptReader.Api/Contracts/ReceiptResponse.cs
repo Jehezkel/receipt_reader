@@ -7,6 +7,7 @@ public sealed class ReceiptResponse
     public Guid Id { get; init; }
     public ReceiptStatus Status { get; init; }
     public string ImageUrl { get; init; } = string.Empty;
+    public ReceiptImageMetadataResponse ImageMetadata { get; init; } = new();
     public DateTimeOffset CreatedAt { get; init; }
     public string RawOcrText { get; init; } = string.Empty;
     public IReadOnlyList<string> NormalizedLines { get; init; } = [];
@@ -15,8 +16,10 @@ public sealed class ReceiptResponse
     public string? SelectedOcrVariant { get; init; }
     public IReadOnlyList<SectionConfidenceArtifact> SectionConfidences { get; init; } = [];
     public ReceiptSummary ReceiptSummary { get; init; } = new();
+    public ReceiptSummary ExtractedReceiptSummary { get; init; } = new();
     public ReceiptConsistencyResult Consistency { get; init; } = new();
     public IReadOnlyList<ReceiptItem> Items { get; init; } = [];
+    public IReadOnlyList<ReceiptItem> ExtractedItems { get; init; } = [];
     public IReadOnlyList<ReceiptPayment> Payments { get; init; } = [];
     public double Confidence { get; init; }
     public string? AiWasTriggeredBecause { get; init; }
