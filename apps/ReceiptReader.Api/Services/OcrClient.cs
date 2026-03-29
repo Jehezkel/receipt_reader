@@ -45,6 +45,9 @@ public sealed class OcrClient : IOcrClient
                     Text = line.Text,
                     Confidence = line.Confidence,
                     CharacterCount = line.CharacterCount,
+                    Section = line.Section ?? "unknown",
+                    VariantId = line.VariantId ?? "selected",
+                    AlternateTexts = line.AlternateTexts ?? [],
                     BoundingBox = line.BoundingBox is null ? null : new Models.BoundingBox
                     {
                         X = line.BoundingBox.X,
@@ -56,7 +59,10 @@ public sealed class OcrClient : IOcrClient
                 QualityScore = payload.QualityScore,
                 Provider = payload.Provider,
                 AppliedFilters = payload.Metadata?.AppliedFilters ?? [],
-                PreprocessNotes = payload.Metadata?.PreprocessNotes
+                PreprocessNotes = payload.Metadata?.PreprocessNotes,
+                SelectedVariantId = payload.Metadata?.SelectedVariantId,
+                SectionConfidences = payload.Metadata?.SectionConfidences?.Select(MapSectionConfidence).ToList() ?? [],
+                Variants = payload.Metadata?.Variants?.Select(MapVariant).ToList() ?? []
             };
         }
         catch (Exception exception)
@@ -84,16 +90,79 @@ public sealed class OcrClient : IOcrClient
                         NormalizedText = line,
                         Text = line,
                         Confidence = 0.45,
-                        CharacterCount = line.Length
+                        CharacterCount = line.Length,
+                        Section = "unknown",
+                        VariantId = "fallback"
                     })
                     .ToList(),
                 QualityScore = 0.45,
                 Provider = "fallback",
                 AppliedFilters = ["fallback-text"],
-                PreprocessNotes = "OCR service unavailable."
+                PreprocessNotes = "OCR service unavailable.",
+                SelectedVariantId = "fallback",
+                Variants =
+                [
+                    new Models.OcrVariantArtifact
+                    {
+                        VariantId = "fallback",
+                        VariantType = "fallback-text",
+                        Section = "full",
+                        Psm = 6,
+                        AppliedFilters = ["fallback-text"],
+                        EstimatedReadabilityScore = 0.2,
+                        QualityScore = 0.45,
+                        Selected = true,
+                        RawText = fallbackText,
+                        NormalizedText = fallbackText
+                    }
+                ],
+                SectionConfidences =
+                [
+                    new Models.SectionConfidenceArtifact
+                    {
+                        Section = "full",
+                        Confidence = 0.45,
+                        SelectedVariantId = "fallback",
+                        Notes = "OCR service unavailable."
+                    }
+                ]
             };
         }
     }
+
+    private static Models.OcrVariantArtifact MapVariant(OcrClientVariant variant) =>
+        new()
+        {
+            VariantId = variant.VariantId,
+            VariantType = variant.VariantType,
+            Section = variant.Section ?? "full",
+            Psm = variant.Psm,
+            CropBox = variant.CropBox is null
+                ? null
+                : new Models.BoundingBox
+                {
+                    X = variant.CropBox.X,
+                    Y = variant.CropBox.Y,
+                    Width = variant.CropBox.Width,
+                    Height = variant.CropBox.Height
+                },
+            RotationDegrees = variant.RotationDegrees,
+            AppliedFilters = variant.AppliedFilters?.ToArray() ?? [],
+            EstimatedReadabilityScore = variant.EstimatedReadabilityScore,
+            QualityScore = variant.QualityScore,
+            Selected = variant.Selected,
+            RawText = variant.RawText,
+            NormalizedText = variant.NormalizedText
+        };
+
+    private static Models.SectionConfidenceArtifact MapSectionConfidence(OcrClientSectionConfidence section) =>
+        new()
+        {
+            Section = section.Section,
+            Confidence = section.Confidence,
+            SelectedVariantId = section.SelectedVariantId,
+            Notes = section.Notes
+        };
 
     private sealed class OcrClientResponse
     {
@@ -132,6 +201,15 @@ public sealed class OcrClient : IOcrClient
 
         [JsonPropertyName("boundingBox")]
         public OcrClientBoundingBox? BoundingBox { get; set; }
+
+        [JsonPropertyName("section")]
+        public string? Section { get; set; }
+
+        [JsonPropertyName("variantId")]
+        public string? VariantId { get; set; }
+
+        [JsonPropertyName("alternateTexts")]
+        public List<string>? AlternateTexts { get; set; }
     }
 
     private sealed class OcrClientMetadata
@@ -141,6 +219,15 @@ public sealed class OcrClient : IOcrClient
 
         [JsonPropertyName("preprocessNotes")]
         public string? PreprocessNotes { get; set; }
+
+        [JsonPropertyName("selectedVariantId")]
+        public string? SelectedVariantId { get; set; }
+
+        [JsonPropertyName("variants")]
+        public List<OcrClientVariant>? Variants { get; set; }
+
+        [JsonPropertyName("sectionConfidences")]
+        public List<OcrClientSectionConfidence>? SectionConfidences { get; set; }
     }
 
     private sealed class OcrClientBoundingBox
@@ -156,5 +243,59 @@ public sealed class OcrClient : IOcrClient
 
         [JsonPropertyName("height")]
         public int Height { get; set; }
+    }
+
+    private sealed class OcrClientVariant
+    {
+        [JsonPropertyName("variantId")]
+        public string VariantId { get; set; } = string.Empty;
+
+        [JsonPropertyName("variantType")]
+        public string VariantType { get; set; } = string.Empty;
+
+        [JsonPropertyName("section")]
+        public string? Section { get; set; }
+
+        [JsonPropertyName("psm")]
+        public int Psm { get; set; }
+
+        [JsonPropertyName("cropBox")]
+        public OcrClientBoundingBox? CropBox { get; set; }
+
+        [JsonPropertyName("rotationDegrees")]
+        public double RotationDegrees { get; set; }
+
+        [JsonPropertyName("appliedFilters")]
+        public List<string>? AppliedFilters { get; set; }
+
+        [JsonPropertyName("estimatedReadabilityScore")]
+        public double EstimatedReadabilityScore { get; set; }
+
+        [JsonPropertyName("qualityScore")]
+        public double QualityScore { get; set; }
+
+        [JsonPropertyName("selected")]
+        public bool Selected { get; set; }
+
+        [JsonPropertyName("rawText")]
+        public string RawText { get; set; } = string.Empty;
+
+        [JsonPropertyName("normalizedText")]
+        public string NormalizedText { get; set; } = string.Empty;
+    }
+
+    private sealed class OcrClientSectionConfidence
+    {
+        [JsonPropertyName("section")]
+        public string Section { get; set; } = string.Empty;
+
+        [JsonPropertyName("confidence")]
+        public double Confidence { get; set; }
+
+        [JsonPropertyName("selectedVariantId")]
+        public string? SelectedVariantId { get; set; }
+
+        [JsonPropertyName("notes")]
+        public string? Notes { get; set; }
     }
 }

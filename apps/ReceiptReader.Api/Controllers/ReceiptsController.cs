@@ -217,12 +217,18 @@ public sealed class ReceiptsController : ControllerBase
             RawOcrText = receipt.OcrArtifact?.RawText ?? string.Empty,
             NormalizedLines = receipt.OcrArtifact?.NormalizedText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [],
             OcrLines = receipt.OcrArtifact?.Lines ?? [],
+            OcrVariants = receipt.OcrArtifact?.Variants ?? [],
+            SelectedOcrVariant = receipt.OcrArtifact?.SelectedVariantId,
+            SectionConfidences = receipt.OcrArtifact?.SectionConfidences ?? [],
             ReceiptSummary = receipt.ReceiptSummary,
             ExtractedReceiptSummary = receipt.ExtractedReceiptSummary ?? receipt.ReceiptSummary,
             Consistency = receipt.Consistency,
             Items = receipt.Items,
             ExtractedItems = receipt.ExtractedItems.Count > 0 ? receipt.ExtractedItems : receipt.Items,
+            Payments = receipt.Payments,
             Confidence = receipt.ReceiptSummary.Confidence,
+            AiWasTriggeredBecause = receipt.AiWasTriggeredBecause,
+            TotalEvidence = BuildTotalEvidence(receipt),
             ProcessingSteps = receipt.ProcessingSteps
         };
 
@@ -282,4 +288,15 @@ public sealed class ReceiptsController : ControllerBase
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string? BuildTotalEvidence(ReceiptRecord receipt)
+    {
+        var summary = receipt.ReceiptSummary;
+        if (summary.TotalGross is null && summary.PaymentsTotal is null && summary.VatBreakdownTotal is null)
+        {
+            return null;
+        }
+
+        return $"Declared={summary.TotalGross?.ToString("0.00") ?? "n/a"}; Payments={summary.PaymentsTotal?.ToString("0.00") ?? "n/a"}; VAT buckets={summary.VatBreakdownTotal?.ToString("0.00") ?? "n/a"}; Source={summary.TotalSourceLine ?? "n/a"}";
+    }
 }

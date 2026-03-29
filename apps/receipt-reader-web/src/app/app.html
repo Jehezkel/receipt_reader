@@ -7,6 +7,26 @@
         Scan from the phone, browse archived receipts, then verify the fields that OCR was unsure
         about with a direct reference back to the photo.
       </p>
+      <div class="hero-badges" aria-label="Product highlights">
+        <span>Mobile capture</span>
+        <span>OCR pipeline</span>
+        <span>Audit-ready archive</span>
+      </div>
+    </div>
+
+    <div class="hero-panel">
+      <div class="panel-topline">
+        <p class="panel-label">Pipeline</p>
+        <span class="panel-chip">Live stack</span>
+      </div>
+      <p class="panel-metric">04 signal stages</p>
+      <ol>
+        <li>Capture or upload an image</li>
+        <li>OCR and heuristic parsing</li>
+        <li>AI or repair assists uncertain receipts</li>
+        <li>Human review finalizes the archive</li>
+      </ol>
+      <p class="panel-note">Built to feel like a compact mobile workflow, not a debug dashboard.</p>
     </div>
 
     <div class="phone-frame">
@@ -153,18 +173,46 @@
                 </div>
                 <div>
                   <span>Items total</span>
-                  <strong>{{ receipt.consistency.calculatedItemsTotalAfterDiscounts ?? receipt.consistency.calculatedItemsTotal ?? 'Pending' }} PLN</strong>
+                  <strong>{{ getItemsTotal(receipt) ?? 'Pending' }} PLN</strong>
                 </div>
                 <div>
-                  <span>Difference</span>
-                  <strong>{{ receipt.consistency.differenceToDeclaredTotal ?? 'n/a' }} PLN</strong>
+                  <span>Payments total</span>
+                  <strong>{{ receipt.consistency.paymentsTotal ?? receipt.receiptSummary.paymentsTotal ?? 'n/a' }} PLN</strong>
                 </div>
                 <div>
                   <span>Status</span>
                   <strong>{{ receipt.consistency.consistencyStatus }}</strong>
                 </div>
               </div>
+
+              @if (receipt.totalEvidence) {
+                <p class="info-note">Evidence: {{ receipt.totalEvidence }}</p>
+              }
+              @if (receipt.aiWasTriggeredBecause) {
+                <p class="info-note">AI trigger: {{ receipt.aiWasTriggeredBecause }}</p>
+              }
             </article>
+
+            @if (hasPayments(receipt)) {
+              <article class="summary-card">
+                <div class="section-heading">
+                  <div>
+                    <p class="card-kicker">Payments</p>
+                    <h2>Detected payment methods</h2>
+                  </div>
+                </div>
+
+                <div class="payment-list">
+                  @for (payment of receipt.payments; track payment.method + payment.sourceLine) {
+                    <div class="payment-card">
+                      <strong>{{ paymentLabel(payment) }}</strong>
+                      <span>{{ payment.amount ?? 'n/a' }} PLN</span>
+                      <p>{{ payment.sourceLine }}</p>
+                    </div>
+                  }
+                </div>
+              </article>
+            }
 
             <article class="summary-card">
               <div class="section-heading">
@@ -262,7 +310,7 @@
 
             <article class="review-panel">
               <p class="card-kicker">Edit summary</p>
-              <div class="form-grid" [ngModelGroup]="'summary'">
+              <div class="form-grid">
                 <label class="field">
                   <span>Merchant</span>
                   <input type="text" [(ngModel)]="reviewDraft()!.summary.merchantName" [ngModelOptions]="{ standalone: true }" />

@@ -51,9 +51,13 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
 
         var tooLittleStructuredData = parsedReceipt.Items.Count < 2;
         var requiresFallback = consistencyStatus is ReceiptConsistencyStatus.Mismatch or ReceiptConsistencyStatus.InsufficientData;
+        var hasVariantConflicts = ocrResult.Variants.Count > 1;
+        var lowSectionConfidence = ocrResult.SectionConfidences.Any(section => section.Confidence < 0.7 && section.Section is "items" or "totals" or "payments");
         var needsAi = !tooLittleStructuredData
             && requiresFallback
-            && uncertainItems.Count > 0;
+            && (uncertainItems.Count > 0 || hasVariantConflicts || lowSectionConfidence);
+
+        var triggerReason = BuildTriggerReason(requiresFallback, uncertainItems.Count, hasVariantConflicts, lowSectionConfidence, tooLittleStructuredData);
 
         if (!needsAi)
         {
@@ -65,7 +69,8 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                 Details = tooLittleStructuredData
                     ? "Gemini skipped because the parser did not extract enough structured items yet."
                     : "Gemini skipped because there is not enough stable data to refine safely.",
-                Provider = "skipped"
+                Provider = "skipped",
+                TriggerReason = triggerReason
             };
         }
 
@@ -156,7 +161,8 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                     Items = MergeItems(parsedReceipt.Items, enriched.Items),
                     WasApplied = true,
                     Provider = _options.Model,
-                    Details = "Gemini refinement applied."
+                    Details = "Gemini refinement applied.",
+                    TriggerReason = triggerReason
                 };
             }
             catch (Exception exception)
@@ -185,8 +191,40 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             Items = parsedReceipt.Items,
             WasApplied = false,
             Provider = "fallback",
-            Details = "Gemini unavailable, OCR-only result kept."
+            Details = "Gemini unavailable, OCR-only result kept.",
+            TriggerReason = triggerReason
         };
+    }
+
+    private static string BuildTriggerReason(bool requiresFallback, int uncertainItemCount, bool hasVariantConflicts, bool lowSectionConfidence, bool tooLittleStructuredData)
+    {
+        if (tooLittleStructuredData)
+        {
+            return "Too little structured data for safe AI reconstruction.";
+        }
+
+        var reasons = new List<string>();
+        if (requiresFallback)
+        {
+            reasons.Add("receipt totals do not balance deterministically");
+        }
+
+        if (uncertainItemCount > 0)
+        {
+            reasons.Add($"{uncertainItemCount} uncertain item candidates");
+        }
+
+        if (hasVariantConflicts)
+        {
+            reasons.Add("multiple OCR variants available");
+        }
+
+        if (lowSectionConfidence)
+        {
+            reasons.Add("low section confidence in key receipt areas");
+        }
+
+        return reasons.Count == 0 ? "No AI trigger." : string.Join("; ", reasons);
     }
 
     private static string BuildPrompt(OcrResult ocrResult, ReceiptParseResult parsedReceipt, IReadOnlyList<ReceiptItem> uncertainItems)
@@ -241,6 +279,12 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             merchantName = parsedReceipt.Summary.MerchantName,
             taxId = parsedReceipt.Summary.TaxId,
             declaredTotalGross = parsedReceipt.Summary.TotalGross,
+            payments = parsedReceipt.Payments.Select(payment => new
+            {
+                payment.Method,
+                payment.Amount,
+                payment.SourceLine
+            }),
             currentDifference = parsedReceipt.Summary.TotalGross.HasValue
                 ? (decimal?)(parsedReceipt.Summary.TotalGross.Value - uncertainItems.Sum(item => item.TotalPrice ?? 0m) + uncertainItems.Sum(item => item.Discount ?? 0m))
                 : null,
@@ -255,6 +299,8 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                 item.CandidateKind,
                 item.RepairReason,
                 item.SourceLines,
+                item.EvidenceLines,
+                item.RecognitionHints,
                 item.ParseWarnings
             }),
             paymentAndSummaryLines = relevantLines,
@@ -454,10 +500,15 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             Confidence = 0.82,
             ArithmeticConfidence = 0.75,
             CandidateKind = ReceiptItemCandidateKind.Repaired,
+            Section = "items",
+            VatCode = item.VatRate,
             SourceLine = item.SourceLine ?? string.Join(" | ", item.SourceLines ?? []),
             SourceLines = item.SourceLines ?? (item.SourceLine is null ? [] : [item.SourceLine]),
+            EvidenceLines = item.SourceLines ?? (item.SourceLine is null ? [] : [item.SourceLine]),
+            RecognitionHints = !string.IsNullOrWhiteSpace(item.Reason) ? [$"ai:{item.Reason}"] : [],
             WasAiCorrected = !string.IsNullOrWhiteSpace(item.Reason) || !string.IsNullOrWhiteSpace(item.CorrectedFrom),
             RepairReason = item.Reason,
+            WasReconstructedFromMultipleLines = (item.SourceLines?.Count ?? 0) > 1,
             ParseWarnings = BuildWarnings(item)
         };
 
@@ -473,8 +524,13 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             Confidence = item.Confidence,
             ArithmeticConfidence = item.ArithmeticConfidence,
             CandidateKind = item.CandidateKind,
+            Section = item.Section,
+            VatCode = item.VatCode,
             SourceLine = item.SourceLine,
             SourceLines = item.SourceLines.ToArray(),
+            EvidenceLines = item.EvidenceLines.ToArray(),
+            RecognitionHints = item.RecognitionHints.ToArray(),
+            WasReconstructedFromMultipleLines = item.WasReconstructedFromMultipleLines,
             WasAiCorrected = item.WasAiCorrected,
             ExcludedByBalancer = item.ExcludedByBalancer,
             RepairReason = item.RepairReason,

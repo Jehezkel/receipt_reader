@@ -44,6 +44,42 @@ public sealed class DeterministicRepairIntegrationTests
     }
 
     [Fact]
+    public void Parser_ShouldInferItemSectionWhenFiscalHeaderIsMissing()
+    {
+        var rawText = """
+        SKLEP TESTOWY
+        NIP 123-45-67-890
+        2026-03-28
+        FILET Z KURCZ. LUZ
+        0,607 x 25,98 15,78C
+        MLEKO 2 x 3,49 6,98B
+        SUMA PLN 22,76
+        """;
+
+        var parser = new HeuristicReceiptParser();
+        var validator = new ReceiptConsistencyValidator();
+
+        var parsed = parser.Parse(BuildOcrResult(rawText));
+        var consistency = validator.Validate(parsed.Summary, parsed.Items);
+
+        Assert.Equal(2, parsed.Items.Count);
+
+        var weighted = Assert.Single(parsed.Items, item => item.Name.Contains("FILET Z KURCZ", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(ReceiptItemCandidateKind.MultiLine, weighted.CandidateKind);
+        Assert.Equal(0.607m, weighted.Quantity);
+        Assert.Equal(25.98m, weighted.UnitPrice);
+        Assert.Equal(15.78m, weighted.TotalPrice);
+
+        var milk = Assert.Single(parsed.Items, item => item.Name.Contains("MLEKO", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(2m, milk.Quantity);
+        Assert.Equal(3.49m, milk.UnitPrice);
+        Assert.Equal(6.98m, milk.TotalPrice);
+
+        Assert.Equal(22.76m, parsed.Summary.TotalGross);
+        Assert.Equal(ReceiptConsistencyStatus.Exact, consistency.ConsistencyStatus);
+    }
+
+    [Fact]
     public void DeterministicRepair_ShouldUseSafeArithmeticVariantBeforeAi()
     {
         var validator = new ReceiptConsistencyValidator();

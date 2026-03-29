@@ -13,6 +13,7 @@ import {
   ReceiptItem,
   ReceiptItemUpdateRequest,
   ReceiptListItem,
+  ReceiptPayment,
   ReceiptResponse,
   UpdateReceiptRequest
 } from './receipt.models';
@@ -333,6 +334,25 @@ export class App {
     return receipt.receiptSummary.merchantName || 'Unknown merchant';
   }
 
+  protected getItemsTotal(receipt: ReceiptResponse): number | null {
+    const fromConsistency = receipt.consistency.calculatedItemsTotalAfterDiscounts ?? receipt.consistency.calculatedItemsTotal;
+    if (fromConsistency !== null && fromConsistency !== undefined) {
+      return fromConsistency;
+    }
+
+    if (!receipt.items.length) {
+      return null;
+    }
+
+    const total = receipt.items.reduce((sum, item) => {
+      const lineTotal = item.totalPrice ?? 0;
+      const discount = item.discount ?? 0;
+      return sum + lineTotal - discount;
+    }, 0);
+
+    return Math.round(total * 100) / 100;
+  }
+
   protected getReviewSuggestions(): ReviewSuggestion[] {
     const receipt = this.selectedReceipt();
     const draft = this.reviewDraft();
@@ -404,7 +424,7 @@ export class App {
   }
 
   protected focusItem(item: ReviewItemDraft | ReceiptItem): void {
-    const lineNumbers = 'sourceLineNumbers' in item ? item.sourceLineNumbers : [];
+    const lineNumbers = item.sourceLineNumbers ?? [];
     const sourceLines = item.sourceLines.length > 0
       ? item.sourceLines
       : (item.sourceLine ? [item.sourceLine] : []);
@@ -420,7 +440,7 @@ export class App {
   protected highlightOcrLine(line: OcrLine): void {
     this.activeReference.set({
       title: 'OCR line',
-      subtitle: line.lineType,
+      subtitle: `${line.lineType} • ${line.section}`,
       lineNumbers: [line.lineNumber],
       sourceLines: [line.rawText]
     });
@@ -434,12 +454,20 @@ export class App {
     return this.deletingReceiptId() === receiptId;
   }
 
+  protected hasPayments(receipt: ReceiptResponse): boolean {
+    return receipt.payments.length > 0;
+  }
+
+  protected paymentLabel(payment: ReceiptPayment): string {
+    return payment.method || 'Payment';
+  }
+
   protected trackArchive(_: number, receipt: ReceiptListItem): string {
     return receipt.id;
   }
 
   protected trackOcrLine(_: number, line: OcrLine): string {
-    return `${line.lineNumber}-${line.rawText}`;
+    return `${line.variantId}-${line.lineNumber}-${line.rawText}`;
   }
 
   protected trackItem(index: number, item: ReviewItemDraft | ReceiptItem): string {

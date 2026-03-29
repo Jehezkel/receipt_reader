@@ -9,5 +9,8 @@ public sealed class OcrArtifact
     public double QualityScore { get; set; }
     public string[] AppliedFilters { get; set; } = [];
     public string? PreprocessNotes { get; set; }
+    public IReadOnlyList<OcrVariantArtifact> Variants { get; set; } = [];
+    public string? SelectedVariantId { get; set; }
+    public IReadOnlyList<SectionConfidenceArtifact> SectionConfidences { get; set; } = [];
     public ImagePreparationArtifact? ImagePreparation { get; set; }
 }

@@ -7,6 +7,10 @@ public sealed class ReceiptSummary
     public DateOnly? PurchaseDate { get; set; }
     public string Currency { get; set; } = "PLN";
     public decimal? TotalGross { get; set; }
+    public decimal? PaymentsTotal { get; set; }
+    public decimal? VatBreakdownTotal { get; set; }
+    public decimal? DeclaredSubtotal { get; set; }
+    public string? TotalSourceLine { get; set; }
     public double Confidence { get; set; }
     public bool TotalMatchesItems { get; set; }
     public bool NeedsReview { get; set; }

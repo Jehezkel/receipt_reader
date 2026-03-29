@@ -12,11 +12,19 @@ public sealed class ReceiptConsistencyValidator : IReceiptConsistencyValidator
         var calculatedTotal = CalculateItemsTotal(items, includeDiscounts: false);
         var calculatedAfterDiscounts = CalculateItemsTotal(items, includeDiscounts: true);
         var bestCalculated = calculatedAfterDiscounts ?? calculatedTotal;
+        var paymentsTotal = summary.PaymentsTotal;
+        var vatBreakdownTotal = summary.VatBreakdownTotal;
         decimal? difference = declaredTotal.HasValue && bestCalculated.HasValue
             ? decimal.Round(declaredTotal.Value - bestCalculated.Value, 2)
             : null;
+        decimal? paymentsDifference = declaredTotal.HasValue && paymentsTotal.HasValue
+            ? decimal.Round(declaredTotal.Value - paymentsTotal.Value, 2)
+            : null;
+        decimal? vatDifference = declaredTotal.HasValue && vatBreakdownTotal.HasValue
+            ? decimal.Round(declaredTotal.Value - vatBreakdownTotal.Value, 2)
+            : null;
 
-        var status = ResolveStatus(declaredTotal, bestCalculated, difference);
+        var status = ResolveStatus(declaredTotal, bestCalculated, difference, paymentsDifference, vatDifference);
         var needsReview = status is ReceiptConsistencyStatus.Mismatch or ReceiptConsistencyStatus.InsufficientData
             || items.Any(item => item.ParseWarnings.Count > 0 || item.Confidence < 0.6 || item.ExcludedByBalancer);
 
@@ -39,7 +47,11 @@ public sealed class ReceiptConsistencyValidator : IReceiptConsistencyValidator
             DeclaredTotal = declaredTotal,
             CalculatedItemsTotal = calculatedTotal,
             CalculatedItemsTotalAfterDiscounts = calculatedAfterDiscounts,
+            PaymentsTotal = paymentsTotal,
+            VatBreakdownTotal = vatBreakdownTotal,
             DifferenceToDeclaredTotal = difference,
+            DifferenceToPaymentsTotal = paymentsDifference,
+            DifferenceToVatBreakdownTotal = vatDifference,
             ConsistencyStatus = status,
             NeedsReview = needsReview
         };
@@ -87,8 +99,25 @@ public sealed class ReceiptConsistencyValidator : IReceiptConsistencyValidator
         return foundAny ? decimal.Round(total, 2) : null;
     }
 
-    private static ReceiptConsistencyStatus ResolveStatus(decimal? declaredTotal, decimal? calculatedTotal, decimal? difference)
+    private static ReceiptConsistencyStatus ResolveStatus(
+        decimal? declaredTotal,
+        decimal? calculatedTotal,
+        decimal? difference,
+        decimal? paymentsDifference,
+        decimal? vatDifference)
     {
+        if (paymentsDifference is 0m || vatDifference is 0m)
+        {
+            if (difference is null)
+            {
+                return ReceiptConsistencyStatus.ToleranceMatch;
+            }
+
+            return Math.Abs(difference.Value) <= Tolerance
+                ? ReceiptConsistencyStatus.Exact
+                : ReceiptConsistencyStatus.ToleranceMatch;
+        }
+
         if (!declaredTotal.HasValue || !calculatedTotal.HasValue || !difference.HasValue)
         {
             return ReceiptConsistencyStatus.InsufficientData;

@@ -47,6 +47,12 @@ public sealed class ReceiptParsingIntegrationTests
         Assert.Equal("852-10-21-463", parsed.Summary.TaxId);
         Assert.Equal(new DateOnly(2026, 1, 7), parsed.Summary.PurchaseDate);
         Assert.Equal(275.25m, parsed.Summary.TotalGross);
+        Assert.Equal(275.25m, parsed.Summary.PaymentsTotal);
+        Assert.Equal(275.25m, parsed.Summary.VatBreakdownTotal);
+        Assert.Equal("Suma PLN 275,25", parsed.Summary.TotalSourceLine);
+        Assert.Equal(2, parsed.Payments.Count);
+        Assert.Contains(parsed.Payments, payment => payment.Method == "Bon" && payment.Amount == 100.00m);
+        Assert.Contains(parsed.Payments, payment => payment.Method == "Karta" && payment.Amount == 175.25m);
 
         Assert.DoesNotContain(parsed.Items, item => item.Name.Contains("KARTA", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(parsed.Items, item => item.Name.Contains("WPLATA", StringComparison.OrdinalIgnoreCase));
@@ -59,12 +65,17 @@ public sealed class ReceiptParsingIntegrationTests
         Assert.Equal(0.607m, weightedChicken.Quantity);
         Assert.Equal(25.98m, weightedChicken.UnitPrice);
         Assert.Equal(15.78m, weightedChicken.TotalPrice);
+        Assert.True(weightedChicken.WasReconstructedFromMultipleLines);
+        Assert.Contains("weighted-item", weightedChicken.RecognitionHints);
 
         var discountedCheese = Assert.Single(parsed.Items, item => item.Name.Contains("ZSEREK ROLMLE", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(1.00m, discountedCheese.Discount);
+        Assert.Contains("discount-applied", discountedCheese.RecognitionHints);
 
         _output.WriteLine($"Declared total: {consistency.DeclaredTotal:0.00}");
         _output.WriteLine($"Calculated total after discounts: {consistency.CalculatedItemsTotalAfterDiscounts:0.00}");
+        _output.WriteLine($"Payments total: {consistency.PaymentsTotal:0.00}");
+        _output.WriteLine($"VAT breakdown total: {consistency.VatBreakdownTotal:0.00}");
         _output.WriteLine($"Difference: {consistency.DifferenceToDeclaredTotal:0.00}");
         _output.WriteLine($"Status: {consistency.ConsistencyStatus}");
         _output.WriteLine("Parsed items breakdown:");
@@ -81,7 +92,9 @@ public sealed class ReceiptParsingIntegrationTests
 
         Assert.Equal(parsed.Summary.TotalGross, consistency.DeclaredTotal);
         Assert.NotNull(consistency.DifferenceToDeclaredTotal);
+        Assert.Equal(0m, consistency.DifferenceToPaymentsTotal);
+        Assert.Equal(0m, consistency.DifferenceToVatBreakdownTotal);
         Assert.InRange(Math.Abs(consistency.DifferenceToDeclaredTotal.Value), 0m, 4m);
-        Assert.Equal(ReceiptConsistencyStatus.Mismatch, consistency.ConsistencyStatus);
+        Assert.Equal(ReceiptConsistencyStatus.ToleranceMatch, consistency.ConsistencyStatus);
     }
 }

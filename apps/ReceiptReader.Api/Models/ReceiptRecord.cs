@@ -15,6 +15,8 @@ public sealed class ReceiptRecord
     public ReceiptConsistencyResult Consistency { get; set; } = new();
     public List<ReceiptItem> Items { get; set; } = [];
     public List<ReceiptItem> ExtractedItems { get; set; } = [];
+    public List<ReceiptPayment> Payments { get; set; } = [];
     public OcrArtifact? OcrArtifact { get; set; }
+    public string? AiWasTriggeredBecause { get; set; }
     public List<ProcessingStep> ProcessingSteps { get; set; } = [];
 }

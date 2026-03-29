@@ -1,9 +1,12 @@
 html {
   font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
+  background: #050b14;
+  color: #ecf3ff;
 }
 
 h1,
@@ -16,4 +19,13 @@ strong {
 button,
 input {
   font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(104, 225, 253, 0.3);
+  color: #f8fbff;
 }
