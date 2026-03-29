@@ -25,7 +25,7 @@ public sealed class ReceiptsController : ControllerBase
     }
 
     [HttpPost]
-    [RequestSizeLimit(15_000_000)]
+    [RequestSizeLimit(50_000_000)]
     [Consumes("multipart/form-data")]
     [ProducesResponseType<CreateReceiptResponse>(StatusCodes.Status202Accepted)]
     public async Task<ActionResult<CreateReceiptResponse>> CreateAsync(IFormFile file, CancellationToken cancellationToken)
