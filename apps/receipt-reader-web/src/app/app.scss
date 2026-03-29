@@ -552,6 +552,61 @@
   }
 }
 
+@media (max-width: 767px) {
+  .app-shell {
+    padding: 0 0 2rem;
+    background: linear-gradient(180deg, #fbf6ef 0%, #f2eadf 42%, #e8dfd3 100%);
+  }
+
+  .intro {
+    width: 100%;
+    gap: 0;
+  }
+
+  .intro-copy,
+  .hero-panel {
+    display: none;
+  }
+
+  .phone-frame {
+    width: 100%;
+    max-width: none;
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .phone-frame::before {
+    display: none;
+  }
+
+  .phone-topbar {
+    padding: 1rem;
+    color: #1b2430;
+    background: rgba(255, 255, 255, 0.72);
+    border-bottom: 1px solid rgba(62, 48, 31, 0.08);
+    backdrop-filter: blur(14px);
+  }
+
+  .phone-body {
+    min-height: calc(100vh - 4.5rem);
+    border-radius: 0;
+    background:
+      linear-gradient(180deg, rgba(255, 250, 244, 0.98), rgba(249, 244, 237, 0.96)),
+      linear-gradient(120deg, rgba(255, 221, 180, 0.08), rgba(115, 176, 255, 0.08));
+  }
+
+  .status-chip {
+    background: rgba(49, 64, 99, 0.1);
+    color: #32405f;
+  }
+
+  .screen {
+    padding: 1rem 0.85rem 1.2rem;
+  }
+}
+
 @media (max-width: 720px) {
   .intro {
     grid-template-columns: 1fr;
