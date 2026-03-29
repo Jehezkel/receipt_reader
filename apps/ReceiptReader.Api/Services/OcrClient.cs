@@ -39,10 +39,12 @@ public sealed class OcrClient : IOcrClient
                 NormalizedText = payload.NormalizedText,
                 Lines = payload.Lines.Select(line => new Models.OcrLine
                 {
+                    LineNumber = line.LineNumber,
                     RawText = line.Text,
                     NormalizedText = line.Text,
                     Text = line.Text,
                     Confidence = line.Confidence,
+                    CharacterCount = line.CharacterCount,
                     BoundingBox = line.BoundingBox is null ? null : new Models.BoundingBox
                     {
                         X = line.BoundingBox.X,
@@ -52,7 +54,9 @@ public sealed class OcrClient : IOcrClient
                     }
                 }).ToList(),
                 QualityScore = payload.QualityScore,
-                Provider = payload.Provider
+                Provider = payload.Provider,
+                AppliedFilters = payload.Metadata?.AppliedFilters ?? [],
+                PreprocessNotes = payload.Metadata?.PreprocessNotes
             };
         }
         catch (Exception exception)
@@ -73,16 +77,20 @@ public sealed class OcrClient : IOcrClient
                 RawText = fallbackText,
                 NormalizedText = fallbackText,
                 Lines = fallbackText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(line => new Models.OcrLine
+                    .Select((line, index) => new Models.OcrLine
                     {
+                        LineNumber = index,
                         RawText = line,
                         NormalizedText = line,
                         Text = line,
-                        Confidence = 0.45
+                        Confidence = 0.45,
+                        CharacterCount = line.Length
                     })
                     .ToList(),
                 QualityScore = 0.45,
-                Provider = "fallback"
+                Provider = "fallback",
+                AppliedFilters = ["fallback-text"],
+                PreprocessNotes = "OCR service unavailable."
             };
         }
     }
@@ -103,18 +111,36 @@ public sealed class OcrClient : IOcrClient
 
         [JsonPropertyName("lines")]
         public List<OcrClientLine> Lines { get; set; } = [];
+
+        [JsonPropertyName("metadata")]
+        public OcrClientMetadata? Metadata { get; set; }
     }
 
     private sealed class OcrClientLine
     {
+        [JsonPropertyName("lineNumber")]
+        public int LineNumber { get; set; }
+
         [JsonPropertyName("text")]
         public string Text { get; set; } = string.Empty;
 
         [JsonPropertyName("confidence")]
         public double Confidence { get; set; }
 
+        [JsonPropertyName("characterCount")]
+        public int CharacterCount { get; set; }
+
         [JsonPropertyName("boundingBox")]
         public OcrClientBoundingBox? BoundingBox { get; set; }
+    }
+
+    private sealed class OcrClientMetadata
+    {
+        [JsonPropertyName("appliedFilters")]
+        public List<string> AppliedFilters { get; set; } = [];
+
+        [JsonPropertyName("preprocessNotes")]
+        public string? PreprocessNotes { get; set; }
     }
 
     private sealed class OcrClientBoundingBox

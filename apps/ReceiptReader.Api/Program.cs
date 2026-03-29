@@ -22,9 +22,18 @@ builder.Services.AddSingleton<IReceiptRepository, InMemoryReceiptRepository>();
 builder.Services.AddSingleton<IStorageService, LocalFileStorageService>();
 builder.Services.AddSingleton<IReceiptParser, HeuristicReceiptParser>();
 builder.Services.AddSingleton<IReceiptConsistencyValidator, ReceiptConsistencyValidator>();
+builder.Services.AddSingleton<IReceiptRepairService, DeterministicReceiptRepairService>();
 builder.Services.AddSingleton<IReceiptProcessingQueue, ReceiptProcessingQueue>();
 builder.Services.AddHostedService<ReceiptProcessingWorker>();
 builder.Services.AddHttpClient<IOcrClient, OcrClient>((serviceProvider, client) =>
+{
+    var options = serviceProvider.GetRequiredService<IConfiguration>()
+        .GetSection(OcrOptions.SectionName)
+        .Get<OcrOptions>() ?? new OcrOptions();
+    client.BaseAddress = new Uri(options.BaseUrl);
+    client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+});
+builder.Services.AddHttpClient<IReceiptImagePreparationClient, ReceiptImagePreparationClient>((serviceProvider, client) =>
 {
     var options = serviceProvider.GetRequiredService<IConfiguration>()
         .GetSection(OcrOptions.SectionName)

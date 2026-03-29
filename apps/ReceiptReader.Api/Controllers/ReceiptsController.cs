@@ -13,15 +13,18 @@ public sealed class ReceiptsController : ControllerBase
     private readonly IReceiptRepository _repository;
     private readonly IStorageService _storageService;
     private readonly IReceiptProcessingQueue _processingQueue;
+    private readonly IReceiptImagePreparationClient _imagePreparationClient;
 
     public ReceiptsController(
         IReceiptRepository repository,
         IStorageService storageService,
-        IReceiptProcessingQueue processingQueue)
+        IReceiptProcessingQueue processingQueue,
+        IReceiptImagePreparationClient imagePreparationClient)
     {
         _repository = repository;
         _storageService = storageService;
         _processingQueue = processingQueue;
+        _imagePreparationClient = imagePreparationClient;
     }
 
     [HttpPost]
@@ -35,20 +38,32 @@ public sealed class ReceiptsController : ControllerBase
             return BadRequest("Image file is required.");
         }
 
-        var (storedPath, publicUrl) = await _storageService.SaveReceiptImageAsync(file, cancellationToken);
+        var preparation = await _imagePreparationClient.PrepareAsync(file, cancellationToken);
+        var (storedPath, publicUrl) = await _storageService.SaveReceiptImageAsync(
+            preparation.PreparedBytes,
+            preparation.Artifact.OutputExtension,
+            cancellationToken);
         var receipt = new ReceiptRecord
         {
             ImageUrl = publicUrl,
             StoredFilePath = storedPath,
             OriginalFileName = file.FileName,
+            ImagePreparation = preparation.Artifact,
             Job = new ProcessingJob
             {
                 ReceiptId = Guid.Empty,
-                Stage = ProcessingStage.Stored,
+                Stage = ProcessingStage.PreparedForOcr,
                 Provider = "ocr-go"
             },
             ProcessingSteps =
             [
+                new ProcessingStep
+                {
+                    Stage = ProcessingStage.PreparedForOcr,
+                    Status = preparation.Artifact.UsedFallback ? "Warning" : "Completed",
+                    Details = BuildPreparationDetails(preparation.Artifact),
+                    Timestamp = DateTimeOffset.UtcNow
+                },
                 new ProcessingStep
                 {
                     Stage = ProcessingStage.Stored,
@@ -72,6 +87,21 @@ public sealed class ReceiptsController : ControllerBase
         };
 
         return Accepted(response.StatusUrl, response);
+    }
+
+    private static string BuildPreparationDetails(ImagePreparationArtifact artifact)
+    {
+        var cropSummary = artifact.CropApplied && artifact.CropBox is not null
+            ? $"Prepared receipt crop {artifact.CropBox.Width}x{artifact.CropBox.Height} at ({artifact.CropBox.X},{artifact.CropBox.Y})"
+            : "Prepared image without crop";
+        var dimensions = artifact.OriginalWidth > 0 && artifact.OriginalHeight > 0
+            ? $"dimensions {artifact.OriginalWidth}x{artifact.OriginalHeight} -> {artifact.PreparedWidth}x{artifact.PreparedHeight}"
+            : $"prepared dimensions {artifact.PreparedWidth}x{artifact.PreparedHeight}";
+        var bytes = artifact.OriginalBytes > 0
+            ? $"size {artifact.OriginalBytes}B -> {artifact.PreparedBytes}B"
+            : $"prepared size {artifact.PreparedBytes}B";
+
+        return $"{cropSummary}; {dimensions}; {bytes}. {artifact.Notes}".Trim();
     }
 
     [HttpGet]

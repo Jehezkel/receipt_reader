@@ -9,6 +9,7 @@ public sealed class ReceiptRecord
     public string OriginalFileName { get; set; } = string.Empty;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ProcessingJob Job { get; set; } = new();
+    public ImagePreparationArtifact? ImagePreparation { get; set; }
     public ReceiptSummary ReceiptSummary { get; set; } = new();
     public ReceiptConsistencyResult Consistency { get; set; } = new();
     public List<ReceiptItem> Items { get; set; } = [];

@@ -26,17 +26,23 @@ export interface ReceiptItem {
   discount?: number | null;
   vatRate?: string | null;
   confidence: number;
+  arithmeticConfidence: number;
+  candidateKind: 'Standard' | 'Weighted' | 'MultiLine' | 'DiscountAdjusted' | 'Repaired' | 'Excluded';
   sourceLine: string;
   sourceLines: string[];
   wasAiCorrected: boolean;
+  excludedByBalancer: boolean;
+  repairReason?: string | null;
   parseWarnings: string[];
 }
 
 export interface OcrLine {
+  lineNumber: number;
   rawText: string;
   normalizedText: string;
   text: string;
   confidence: number;
+  characterCount: number;
   lineType: 'Unknown' | 'Header' | 'ItemCandidate' | 'Subtotal' | 'Total' | 'Vat' | 'Discount' | 'Payment' | 'Technical';
 }
 

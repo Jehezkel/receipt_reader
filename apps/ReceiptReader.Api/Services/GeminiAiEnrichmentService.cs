@@ -49,9 +49,10 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                 ? ReceiptConsistencyStatus.Mismatch
                 : ReceiptConsistencyStatus.InsufficientData;
 
-        var tooLittleStructuredData = parsedReceipt.Items.Count < 3;
+        var tooLittleStructuredData = parsedReceipt.Items.Count < 2;
+        var requiresFallback = consistencyStatus is ReceiptConsistencyStatus.Mismatch or ReceiptConsistencyStatus.InsufficientData;
         var needsAi = !tooLittleStructuredData
-            && consistencyStatus != ReceiptConsistencyStatus.InsufficientData
+            && requiresFallback
             && uncertainItems.Count > 0;
 
         if (!needsAi)
@@ -147,7 +148,7 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                         TaxId = enriched.TaxId ?? parsedReceipt.Summary.TaxId,
                         PurchaseDate = parsedReceipt.Summary.PurchaseDate,
                         Currency = parsedReceipt.Summary.Currency,
-                        TotalGross = enriched.TotalGross ?? parsedReceipt.Summary.TotalGross,
+                        TotalGross = parsedReceipt.Summary.TotalGross,
                         Confidence = Math.Min(0.98, parsedReceipt.Summary.Confidence + 0.08),
                         TotalMatchesItems = parsedReceipt.Summary.TotalMatchesItems,
                         NeedsReview = parsedReceipt.Summary.NeedsReview
@@ -239,7 +240,10 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
         {
             merchantName = parsedReceipt.Summary.MerchantName,
             taxId = parsedReceipt.Summary.TaxId,
-            totalGross = parsedReceipt.Summary.TotalGross,
+            declaredTotalGross = parsedReceipt.Summary.TotalGross,
+            currentDifference = parsedReceipt.Summary.TotalGross.HasValue
+                ? (decimal?)(parsedReceipt.Summary.TotalGross.Value - uncertainItems.Sum(item => item.TotalPrice ?? 0m) + uncertainItems.Sum(item => item.Discount ?? 0m))
+                : null,
             uncertainItems = uncertainItems.Select(item => new
             {
                 item.Name,
@@ -247,6 +251,9 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                 item.UnitPrice,
                 item.TotalPrice,
                 item.Discount,
+                item.ArithmeticConfidence,
+                item.CandidateKind,
+                item.RepairReason,
                 item.SourceLines,
                 item.ParseWarnings
             }),
@@ -254,7 +261,7 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             note = "Do not return payment lines, tax summary lines, totals or card/cash lines as receipt items."
         });
 
-        return $"{schemaHint}\nCorrect only uncertain items and do not invent missing products. Never classify payment methods, VAT summaries, subtotal lines, or terminal lines as items. Keep the declared total conservative and use OCR lines as the source of truth. If a correction would worsen the balance, leave the draft unchanged.\nDraft:\n{currentDraft}";
+        return $"{schemaHint}\nCorrect only the uncertain items that are causing the receipt balance mismatch. Never invent missing products. Never classify payment methods, VAT summaries, subtotal lines, or terminal lines as items. Do not change merchant, tax id, purchase date or declared total. Use OCR lines as the source of truth. If a correction would worsen the balance, leave the draft unchanged.\nDraft:\n{currentDraft}";
     }
 
     private static bool ShouldRetry(Exception exception)
@@ -445,9 +452,12 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             Discount = item.Discount,
             VatRate = item.VatRate,
             Confidence = 0.82,
+            ArithmeticConfidence = 0.75,
+            CandidateKind = ReceiptItemCandidateKind.Repaired,
             SourceLine = item.SourceLine ?? string.Join(" | ", item.SourceLines ?? []),
             SourceLines = item.SourceLines ?? (item.SourceLine is null ? [] : [item.SourceLine]),
             WasAiCorrected = !string.IsNullOrWhiteSpace(item.Reason) || !string.IsNullOrWhiteSpace(item.CorrectedFrom),
+            RepairReason = item.Reason,
             ParseWarnings = BuildWarnings(item)
         };
 
@@ -461,9 +471,13 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             Discount = item.Discount,
             VatRate = item.VatRate,
             Confidence = item.Confidence,
+            ArithmeticConfidence = item.ArithmeticConfidence,
+            CandidateKind = item.CandidateKind,
             SourceLine = item.SourceLine,
             SourceLines = item.SourceLines.ToArray(),
             WasAiCorrected = item.WasAiCorrected,
+            ExcludedByBalancer = item.ExcludedByBalancer,
+            RepairReason = item.RepairReason,
             ParseWarnings = item.ParseWarnings.ToArray()
         };
 

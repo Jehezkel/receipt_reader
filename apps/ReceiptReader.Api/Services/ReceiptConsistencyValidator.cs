@@ -18,7 +18,7 @@ public sealed class ReceiptConsistencyValidator : IReceiptConsistencyValidator
 
         var status = ResolveStatus(declaredTotal, bestCalculated, difference);
         var needsReview = status is ReceiptConsistencyStatus.Mismatch or ReceiptConsistencyStatus.InsufficientData
-            || items.Any(item => item.ParseWarnings.Count > 0 || item.Confidence < 0.6);
+            || items.Any(item => item.ParseWarnings.Count > 0 || item.Confidence < 0.6 || item.ExcludedByBalancer);
 
         var penalizedItems = status is ReceiptConsistencyStatus.Mismatch or ReceiptConsistencyStatus.InsufficientData;
         if (penalizedItems)

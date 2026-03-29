@@ -12,16 +12,20 @@ public sealed class LocalFileStorageService : IStorageService
         _options = options.Value;
     }
 
-    public async Task<(string StoredPath, string PublicUrl)> SaveReceiptImageAsync(IFormFile file, CancellationToken cancellationToken)
+    public async Task<(string StoredPath, string PublicUrl)> SaveReceiptImageAsync(
+        ReadOnlyMemory<byte> fileContent,
+        string fileExtension,
+        CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_options.UploadRootPath);
 
-        var extension = Path.GetExtension(file.FileName);
-        var fileName = $"{Guid.NewGuid():N}{extension}";
+        var normalizedExtension = string.IsNullOrWhiteSpace(fileExtension)
+            ? ".jpg"
+            : fileExtension.StartsWith('.') ? fileExtension : $".{fileExtension}";
+        var fileName = $"{Guid.NewGuid():N}{normalizedExtension}";
         var storedPath = Path.Combine(_options.UploadRootPath, fileName);
 
-        await using var stream = File.Create(storedPath);
-        await file.CopyToAsync(stream, cancellationToken);
+        await File.WriteAllBytesAsync(storedPath, fileContent.ToArray(), cancellationToken);
 
         var publicUrl = $"{_options.PublicBaseUrl.TrimEnd('/')}/{fileName}";
         return (storedPath, publicUrl);

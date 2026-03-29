@@ -1,0 +1,16 @@
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  receipt-ocr:
+    ports:
+      - "8081:8080"
+
+  receipt-api:
+    ports:
+      - "8080:8080"
+
+  receipt-web:
+    ports:
+      - "4201:80"

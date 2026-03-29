@@ -9,4 +9,6 @@ public sealed class OcrResult
     public IReadOnlyList<OcrLine> Lines { get; init; } = [];
     public double QualityScore { get; init; }
     public string Provider { get; init; } = "receipt-ocr";
+    public IReadOnlyList<string> AppliedFilters { get; init; } = [];
+    public string? PreprocessNotes { get; init; }
 }

@@ -54,10 +54,12 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             var lineType = ClassifyLine(normalizedText);
             normalized.Add(new OcrLine
             {
+                LineNumber = line.LineNumber,
                 RawText = string.IsNullOrWhiteSpace(line.RawText) ? line.Text : line.RawText,
                 NormalizedText = normalizedText,
                 Text = normalizedText,
                 Confidence = line.Confidence,
+                CharacterCount = line.CharacterCount == 0 ? normalizedText.Length : line.CharacterCount,
                 BoundingBox = line.BoundingBox,
                 LineType = lineType
             });
@@ -109,6 +111,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
                 {
                     var lastItem = items[^1];
                     lastItem.Discount = decimal.Round((lastItem.Discount ?? 0m) + discountAmount, 2);
+                    lastItem.CandidateKind = ReceiptItemCandidateKind.DiscountAdjusted;
                     lastItem.ParseWarnings = lastItem.ParseWarnings
                         .Append("Standalone discount line applied to previous item.")
                         .Distinct()
@@ -135,6 +138,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             var parsedItem = ParseItemCandidate(candidateLines);
             if (parsedItem is not null)
             {
+                parsedItem.CandidateKind = ResolveCandidateKind(parsedItem, candidateLines, current);
                 items.Add(parsedItem);
             }
         }
@@ -293,6 +297,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
 
         var confidence = candidateLines.Average(line => line.Confidence);
         confidence = warnings.Count > 0 ? Math.Max(0.3, confidence - 0.15) : Math.Min(0.92, confidence + 0.05);
+        var arithmeticConfidence = CalculateArithmeticConfidence(quantity, unitPrice, totalPrice, warnings);
 
         return new ReceiptItem
         {
@@ -303,6 +308,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             Discount = discount,
             VatRate = ExtractVatRate(combinedLine),
             Confidence = Math.Round(confidence, 2),
+            ArithmeticConfidence = arithmeticConfidence,
             SourceLine = combinedLine,
             SourceLines = candidateLines.Select(line => line.RawText).ToArray(),
             ParseWarnings = warnings.ToArray()
@@ -368,11 +374,67 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
         {
             var recomputedTotal = decimal.Round(quantity.Value * unitPrice.Value, 2);
             var hasFractionalQuantity = quantity.Value != decimal.Truncate(quantity.Value);
-            if (!hasFractionalQuantity && WithinTolerance(recomputedTotal, totalPrice, 0.08m))
+            if (!hasFractionalQuantity && WithinTolerance(recomputedTotal, totalPrice, 0.01m))
             {
-                totalPrice = recomputedTotal;
+                unitPrice = decimal.Round(recomputedTotal / quantity.Value, 2);
+            }
+            else if (!hasFractionalQuantity && Math.Abs(recomputedTotal - totalPrice) > 0.01m)
+            {
+                warnings.Add("Arithmetic mismatch kept because explicit line total is treated as more reliable than OCR multiplication.");
             }
         }
+    }
+
+    private static ReceiptItemCandidateKind ResolveCandidateKind(ReceiptItem item, IReadOnlyList<OcrLine> candidateLines, OcrLine current)
+    {
+        if (item.ExcludedByBalancer)
+        {
+            return ReceiptItemCandidateKind.Excluded;
+        }
+
+        if (item.Discount.HasValue)
+        {
+            return ReceiptItemCandidateKind.DiscountAdjusted;
+        }
+
+        if (candidateLines.Count > 1)
+        {
+            return ReceiptItemCandidateKind.MultiLine;
+        }
+
+        if (item.Quantity.HasValue && item.Quantity.Value != decimal.Truncate(item.Quantity.Value))
+        {
+            return ReceiptItemCandidateKind.Weighted;
+        }
+
+        return current.LineType == OcrLineType.ItemCandidate
+            ? ReceiptItemCandidateKind.Standard
+            : ReceiptItemCandidateKind.Repaired;
+    }
+
+    private static double CalculateArithmeticConfidence(decimal? quantity, decimal? unitPrice, decimal totalPrice, IReadOnlyList<string> warnings)
+    {
+        var confidence = 0.92;
+        if (!quantity.HasValue || !unitPrice.HasValue)
+        {
+            confidence -= 0.14;
+        }
+        else
+        {
+            var expectedTotal = decimal.Round(quantity.Value * unitPrice.Value, 2);
+            var difference = Math.Abs(expectedTotal - totalPrice);
+            if (difference > 0.01m)
+            {
+                confidence -= (double)Math.Min(0.4m, difference / 6m);
+            }
+        }
+
+        if (warnings.Count > 0)
+        {
+            confidence -= Math.Min(0.28, warnings.Count * 0.08);
+        }
+
+        return Math.Round(Math.Max(0.2, confidence), 2);
     }
 
     private static bool WithinTolerance(decimal actual, decimal expected, decimal relativeTolerance)
