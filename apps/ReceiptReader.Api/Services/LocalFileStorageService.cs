@@ -30,4 +30,14 @@ public sealed class LocalFileStorageService : IStorageService
         var publicUrl = $"{_options.PublicBaseUrl.TrimEnd('/')}/{fileName}";
         return (storedPath, publicUrl);
     }
+
+    public Task DeleteReceiptImageAsync(string storedPath, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(storedPath) && File.Exists(storedPath))
+        {
+            File.Delete(storedPath);
+        }
+
+        return Task.CompletedTask;
+    }
 }

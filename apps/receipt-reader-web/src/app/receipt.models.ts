@@ -30,10 +30,18 @@ export interface ReceiptItem {
   candidateKind: 'Standard' | 'Weighted' | 'MultiLine' | 'DiscountAdjusted' | 'Repaired' | 'Excluded';
   sourceLine: string;
   sourceLines: string[];
+  sourceLineNumbers: number[];
   wasAiCorrected: boolean;
   excludedByBalancer: boolean;
   repairReason?: string | null;
   parseWarnings: string[];
+}
+
+export interface BoundingBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface OcrLine {
@@ -44,6 +52,7 @@ export interface OcrLine {
   confidence: number;
   characterCount: number;
   lineType: 'Unknown' | 'Header' | 'ItemCandidate' | 'Subtotal' | 'Total' | 'Vat' | 'Discount' | 'Payment' | 'Technical';
+  boundingBox?: BoundingBox | null;
 }
 
 export interface ProcessingStep {
@@ -70,15 +79,23 @@ export interface ReceiptResponse {
   id: string;
   status: string;
   imageUrl: string;
+  imageMetadata: ReceiptImageMetadata;
   createdAt: string;
   rawOcrText: string;
   normalizedLines: string[];
   ocrLines: OcrLine[];
   receiptSummary: ReceiptSummary;
+  extractedReceiptSummary: ReceiptSummary;
   consistency: ReceiptConsistencyResult;
   items: ReceiptItem[];
+  extractedItems: ReceiptItem[];
   confidence: number;
   processingSteps: ProcessingStep[];
+}
+
+export interface ReceiptImageMetadata {
+  width: number;
+  height: number;
 }
 
 export interface JobResponse {
@@ -96,4 +113,32 @@ export interface CreateReceiptResponse {
   jobId: string;
   statusUrl: string;
   receiptUrl: string;
+}
+
+export interface UpdateReceiptRequest {
+  receiptSummary: ReceiptSummaryUpdateRequest;
+  items: ReceiptItemUpdateRequest[];
+}
+
+export interface ReceiptSummaryUpdateRequest {
+  merchantName?: string | null;
+  taxId?: string | null;
+  purchaseDate?: string | null;
+  currency: string;
+  totalGross?: number | null;
+}
+
+export interface ReceiptItemUpdateRequest {
+  name: string;
+  quantity?: number | null;
+  unitPrice?: number | null;
+  totalPrice?: number | null;
+  discount?: number | null;
+  vatRate?: string | null;
+  sourceLine: string;
+  sourceLines: string[];
+  sourceLineNumbers: number[];
+  wasAiCorrected: boolean;
+  repairReason?: string | null;
+  candidateKind: ReceiptItem['candidateKind'];
 }

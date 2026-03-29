@@ -6,4 +6,6 @@ public interface IStorageService
         ReadOnlyMemory<byte> fileContent,
         string fileExtension,
         CancellationToken cancellationToken);
+
+    Task DeleteReceiptImageAsync(string storedPath, CancellationToken cancellationToken);
 }

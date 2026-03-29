@@ -13,6 +13,7 @@ public sealed class ReceiptItem
     public ReceiptItemCandidateKind CandidateKind { get; set; } = ReceiptItemCandidateKind.Standard;
     public string SourceLine { get; set; } = string.Empty;
     public IReadOnlyList<string> SourceLines { get; set; } = [];
+    public IReadOnlyList<int> SourceLineNumbers { get; set; } = [];
     public bool WasAiCorrected { get; set; }
     public bool ExcludedByBalancer { get; set; }
     public string? RepairReason { get; set; }

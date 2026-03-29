@@ -1,7 +1,13 @@
 import { HttpClient } from '@angular/common/http';
 import { inject, Injectable } from '@angular/core';
 import { interval, switchMap, takeWhile } from 'rxjs';
-import { CreateReceiptResponse, JobResponse, ReceiptListItem, ReceiptResponse } from './receipt.models';
+import {
+  CreateReceiptResponse,
+  JobResponse,
+  ReceiptListItem,
+  ReceiptResponse,
+  UpdateReceiptRequest
+} from './receipt.models';
 
 @Injectable({ providedIn: 'root' })
 export class ReceiptApiService {
@@ -20,6 +26,14 @@ export class ReceiptApiService {
 
   getReceipt(receiptId: string) {
     return this.http.get<ReceiptResponse>(`${this.apiBaseUrl}/receipts/${receiptId}`);
+  }
+
+  updateReceipt(receiptId: string, request: UpdateReceiptRequest) {
+    return this.http.put<ReceiptResponse>(`${this.apiBaseUrl}/receipts/${receiptId}`, request);
+  }
+
+  deleteReceipt(receiptId: string) {
+    return this.http.delete<void>(`${this.apiBaseUrl}/receipts/${receiptId}`);
   }
 
   getJob(jobId: string) {

@@ -145,6 +145,9 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                     });
                 }
 
+                receipt.ExtractedReceiptSummary = ReceiptSnapshotCloner.CloneSummary(receipt.ReceiptSummary);
+                receipt.ExtractedItems = ReceiptSnapshotCloner.CloneItems(receipt.Items);
+
                 receipt.Job.Stage = ProcessingStage.Completed;
                 receipt.Job.FinishedAt = DateTimeOffset.UtcNow;
                 receipt.Status = receipt.Consistency.NeedsReview

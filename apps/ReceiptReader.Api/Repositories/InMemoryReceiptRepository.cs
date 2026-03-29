@@ -32,4 +32,9 @@ public sealed class InMemoryReceiptRepository : IReceiptRepository
         _receipts[receipt.Id] = receipt;
         return Task.CompletedTask;
     }
+
+    public Task<bool> DeleteAsync(Guid receiptId, CancellationToken cancellationToken)
+    {
+        return Task.FromResult(_receipts.TryRemove(receiptId, out _));
+    }
 }

@@ -8,4 +8,5 @@ public interface IReceiptRepository
     Task<ReceiptRecord?> GetAsync(Guid receiptId, CancellationToken cancellationToken);
     Task<IReadOnlyList<ReceiptRecord>> ListAsync(CancellationToken cancellationToken);
     Task UpdateAsync(ReceiptRecord receipt, CancellationToken cancellationToken);
+    Task<bool> DeleteAsync(Guid receiptId, CancellationToken cancellationToken);
 }

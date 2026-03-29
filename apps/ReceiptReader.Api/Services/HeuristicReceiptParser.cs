@@ -311,6 +311,7 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             ArithmeticConfidence = arithmeticConfidence,
             SourceLine = combinedLine,
             SourceLines = candidateLines.Select(line => line.RawText).ToArray(),
+            SourceLineNumbers = candidateLines.Select(line => line.LineNumber).Distinct().ToArray(),
             ParseWarnings = warnings.ToArray()
         };
     }

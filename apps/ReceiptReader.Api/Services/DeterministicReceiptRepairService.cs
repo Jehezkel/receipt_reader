@@ -192,25 +192,12 @@ public sealed class DeterministicReceiptRepairService : IReceiptRepairService
             || item.Confidence < 0.5;
     }
 
-    private static ReceiptItem CloneItem(ReceiptItem item) =>
-        new()
-        {
-            Name = item.Name,
-            Quantity = item.Quantity,
-            UnitPrice = item.UnitPrice,
-            TotalPrice = item.ExcludedByBalancer ? null : item.TotalPrice,
-            Discount = item.Discount,
-            VatRate = item.VatRate,
-            Confidence = item.Confidence,
-            ArithmeticConfidence = item.ArithmeticConfidence,
-            CandidateKind = item.CandidateKind,
-            SourceLine = item.SourceLine,
-            SourceLines = item.SourceLines.ToArray(),
-            WasAiCorrected = item.WasAiCorrected,
-            ExcludedByBalancer = item.ExcludedByBalancer,
-            RepairReason = item.RepairReason,
-            ParseWarnings = item.ParseWarnings.ToArray()
-        };
+    private static ReceiptItem CloneItem(ReceiptItem item)
+    {
+        var clone = ReceiptSnapshotCloner.CloneItem(item);
+        clone.TotalPrice = item.ExcludedByBalancer ? null : item.TotalPrice;
+        return clone;
+    }
 
     private sealed record RepairCandidate(int Index, List<ReceiptItem> Variants);
 }
