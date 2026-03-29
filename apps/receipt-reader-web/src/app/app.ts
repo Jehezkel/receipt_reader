@@ -82,6 +82,25 @@ export class App {
     return status === 'CompletedWithWarnings' ? 'Needs review' : status;
   }
 
+  protected getItemsTotal(receipt: ReceiptResponse): number | null {
+    const fromConsistency = receipt.consistency.calculatedItemsTotalAfterDiscounts ?? receipt.consistency.calculatedItemsTotal;
+    if (fromConsistency !== null && fromConsistency !== undefined) {
+      return fromConsistency;
+    }
+
+    if (!receipt.items.length) {
+      return null;
+    }
+
+    const total = receipt.items.reduce((sum, item) => {
+      const lineTotal = item.totalPrice ?? 0;
+      const discount = item.discount ?? 0;
+      return sum + lineTotal - discount;
+    }, 0);
+
+    return Math.round(total * 100) / 100;
+  }
+
   private loadArchive(): void {
     this.isLoadingArchive.set(true);
     this.api.listReceipts()

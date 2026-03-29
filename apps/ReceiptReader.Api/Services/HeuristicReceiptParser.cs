@@ -10,29 +10,41 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
     public ReceiptParseResult Parse(OcrResult ocrResult)
     {
         var normalizedLines = NormalizeAndClassifyLines(ocrResult.Lines, ocrResult.NormalizedText);
+        var sectionedLines = AssignSections(normalizedLines);
+        var totalDetails = ExtractTotalDetails(sectionedLines);
         var summary = new ReceiptSummary
         {
-            MerchantName = ExtractMerchantName(normalizedLines),
-            TaxId = ExtractTaxId(normalizedLines.Select(line => line.NormalizedText)),
-            PurchaseDate = ExtractPurchaseDate(normalizedLines.Select(line => line.NormalizedText)),
+            MerchantName = ExtractMerchantName(sectionedLines),
+            TaxId = ExtractTaxId(sectionedLines.Select(line => line.NormalizedText)),
+            PurchaseDate = ExtractPurchaseDate(sectionedLines.Select(line => line.NormalizedText)),
             Currency = "PLN",
-            TotalGross = ExtractTotal(normalizedLines),
+            TotalGross = totalDetails.Amount,
+            PaymentsTotal = ExtractPaymentsTotal(sectionedLines),
+            VatBreakdownTotal = ExtractVatBreakdownTotal(sectionedLines),
+            DeclaredSubtotal = ExtractDeclaredSubtotal(sectionedLines),
+            TotalSourceLine = totalDetails.SourceLine,
             Confidence = Math.Round(Math.Min(0.95, Math.Max(0.2, ocrResult.QualityScore + 0.06)), 2)
         };
 
-        var items = ExtractItems(normalizedLines);
+        var items = ExtractItems(sectionedLines);
+        var payments = ExtractPayments(sectionedLines);
+        var sections = sectionedLines
+            .GroupBy(line => line.Section)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<OcrLine>)group.ToList());
 
         return new ReceiptParseResult
         {
             Summary = summary,
             Items = items,
+            Payments = payments,
+            Sections = sections,
             Steps =
             [
                 new ProcessingStep
                 {
                     Stage = ProcessingStage.Parsed,
                     Status = "Completed",
-                    Details = $"Parsed {items.Count} line item candidates after classifying OCR lines.",
+                    Details = $"Parsed {items.Count} line item candidates after classifying OCR lines into {sections.Count} sections.",
                     Timestamp = DateTimeOffset.UtcNow
                 }
             ]
@@ -68,13 +80,66 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
         return normalized;
     }
 
+    private static List<OcrLine> AssignSections(IReadOnlyList<OcrLine> lines)
+    {
+        var sectioned = new List<OcrLine>(lines.Count);
+        var bodyStarted = false;
+        var summaryStarted = false;
+
+        foreach (var source in lines)
+        {
+            var line = source;
+            if (!bodyStarted && (IsReceiptBodyStartLine(line) || line.LineType == OcrLineType.ItemCandidate))
+            {
+                bodyStarted = true;
+            }
+
+            line.Section = ResolveSection(line, bodyStarted, summaryStarted);
+            if (line.Section is "totals" or "payments" or "tax-summary")
+            {
+                summaryStarted = true;
+            }
+
+            sectioned.Add(line);
+        }
+
+        return sectioned;
+    }
+
+    private static string ResolveSection(OcrLine line, bool bodyStarted, bool summaryStarted)
+    {
+        if (!bodyStarted)
+        {
+            return "header";
+        }
+
+        if (line.LineType == OcrLineType.Total)
+        {
+            return "totals";
+        }
+
+        if (line.LineType == OcrLineType.Payment)
+        {
+            return "payments";
+        }
+
+        if (line.LineType is OcrLineType.Subtotal or OcrLineType.Vat)
+        {
+            return "tax-summary";
+        }
+
+        if (!summaryStarted && line.LineType is OcrLineType.ItemCandidate or OcrLineType.Discount)
+        {
+            return "items";
+        }
+
+        return summaryStarted ? "footer" : "header";
+    }
+
     private static List<ReceiptItem> ExtractItems(IReadOnlyList<OcrLine> normalizedLines)
     {
         var items = new List<ReceiptItem>();
         var skipped = new HashSet<int>();
-        var parsingStopped = false;
-        var receiptBodyStarted = false;
-        var itemSectionStarted = false;
 
         for (var index = 0; index < normalizedLines.Count; index++)
         {
@@ -84,34 +149,22 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             }
 
             var current = normalizedLines[index];
-            if (!receiptBodyStarted)
+            if (current.Section != "items")
             {
-                if (ReceiptBodyStartRegex().IsMatch(current.NormalizedText))
-                {
-                    receiptBodyStarted = true;
-                }
-
-                continue;
-            }
-
-            if (itemSectionStarted && IsHardStopLine(current))
-            {
-                parsingStopped = true;
-            }
-
-            if (parsingStopped)
-            {
-                current.LineType = UpgradeToPostItemSectionType(current);
                 continue;
             }
 
             if (current.LineType == OcrLineType.Discount)
             {
-                if (itemSectionStarted && items.Count > 0 && TryExtractDiscountAmount(current.NormalizedText, out var discountAmount))
+                if (items.Count > 0 && TryExtractDiscountAmount(current.NormalizedText, out var discountAmount))
                 {
                     var lastItem = items[^1];
                     lastItem.Discount = decimal.Round((lastItem.Discount ?? 0m) + discountAmount, 2);
                     lastItem.CandidateKind = ReceiptItemCandidateKind.DiscountAdjusted;
+                    lastItem.RecognitionHints = lastItem.RecognitionHints
+                        .Append("discount-applied")
+                        .Distinct()
+                        .ToArray();
                     lastItem.ParseWarnings = lastItem.ParseWarnings
                         .Append("Standalone discount line applied to previous item.")
                         .Distinct()
@@ -125,8 +178,6 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             {
                 continue;
             }
-
-            itemSectionStarted = true;
 
             var candidateLines = new List<OcrLine> { current };
             if (ShouldMergeWithNext(normalizedLines, index))
@@ -298,6 +349,8 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
         var confidence = candidateLines.Average(line => line.Confidence);
         confidence = warnings.Count > 0 ? Math.Max(0.3, confidence - 0.15) : Math.Min(0.92, confidence + 0.05);
         var arithmeticConfidence = CalculateArithmeticConfidence(quantity, unitPrice, totalPrice, warnings);
+        var evidenceLines = candidateLines.Select(line => line.NormalizedText).ToArray();
+        var recognitionHints = BuildRecognitionHints(candidateLines, quantity, unitPrice, discount, warnings);
 
         return new ReceiptItem
         {
@@ -307,12 +360,53 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             TotalPrice = totalPrice,
             Discount = discount,
             VatRate = ExtractVatRate(combinedLine),
+            VatCode = ExtractVatCode(combinedLine),
             Confidence = Math.Round(confidence, 2),
             ArithmeticConfidence = arithmeticConfidence,
+            Section = "items",
             SourceLine = combinedLine,
             SourceLines = candidateLines.Select(line => line.RawText).ToArray(),
+            EvidenceLines = evidenceLines,
+            RecognitionHints = recognitionHints,
+            WasReconstructedFromMultipleLines = candidateLines.Count > 1,
             ParseWarnings = warnings.ToArray()
         };
+    }
+
+    private static IReadOnlyList<string> BuildRecognitionHints(
+        IReadOnlyList<OcrLine> candidateLines,
+        decimal? quantity,
+        decimal? unitPrice,
+        decimal? discount,
+        IReadOnlyList<string> warnings)
+    {
+        var hints = new List<string>();
+        if (candidateLines.Count > 1)
+        {
+            hints.Add("multi-line-merge");
+        }
+
+        if (quantity.HasValue && quantity.Value != decimal.Truncate(quantity.Value))
+        {
+            hints.Add("weighted-item");
+        }
+
+        if (unitPrice.HasValue)
+        {
+            hints.Add("unit-price-detected");
+        }
+
+        if (discount.HasValue)
+        {
+            hints.Add("discount-applied");
+        }
+
+        if (warnings.Count > 0)
+        {
+            hints.Add("needs-review");
+        }
+
+        return hints;
     }
 
     private static void ReconcileAmounts(
@@ -518,6 +612,55 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
 
     private static bool ContainsQuantity(string line) => QuantityRegex().IsMatch(line);
 
+    private static bool IsReceiptBodyStartLine(OcrLine line)
+    {
+        if (ReceiptBodyStartRegex().IsMatch(line.NormalizedText))
+        {
+            return true;
+        }
+
+        return line.NormalizedText.Contains("PARAGON", StringComparison.OrdinalIgnoreCase)
+            || line.NormalizedText.Contains("FISKAL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ShouldInferReceiptBodyStart(IReadOnlyList<OcrLine> lines, int index)
+    {
+        if (index < 2 || index >= lines.Count)
+        {
+            return false;
+        }
+
+        var current = lines[index];
+        if (current.LineType != OcrLineType.ItemCandidate || IsHardStopLine(current))
+        {
+            return false;
+        }
+
+        var currentLooksLikeItem = LineLooksLikeItemPayload(current.NormalizedText);
+        var nextLooksLikeContinuation = index + 1 < lines.Count
+            && lines[index + 1].LineType == OcrLineType.ItemCandidate
+            && LineLooksLikeItemPayload(lines[index + 1].NormalizedText);
+
+        if (!currentLooksLikeItem && !nextLooksLikeContinuation)
+        {
+            return false;
+        }
+
+        var previousLines = lines.Take(index).ToList();
+        var hasHeaderSignals = previousLines.Any(line =>
+            line.NormalizedText.Contains("NIP", StringComparison.OrdinalIgnoreCase)
+            || DateRegex().IsMatch(line.NormalizedText)
+            || line.LineType is OcrLineType.Header or OcrLineType.Technical);
+
+        var priorHardStop = previousLines.Any(IsHardStopLine);
+        return hasHeaderSignals && !priorHardStop;
+    }
+
+    private static bool LineLooksLikeItemPayload(string line)
+    {
+        return ExtractAmountTokens(line).Count > 0 || ContainsQuantity(line);
+    }
+
     private static string NormalizeLineText(string rawText)
     {
         var trimmed = rawText.Trim();
@@ -632,11 +775,11 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
         return null;
     }
 
-    private static decimal? ExtractTotal(IEnumerable<OcrLine> lines)
+    private static (decimal? Amount, string? SourceLine) ExtractTotalDetails(IEnumerable<OcrLine> lines)
     {
         foreach (var line in lines.Reverse())
         {
-            if (line.LineType != OcrLineType.Total)
+            if (line.LineType != OcrLineType.Total && line.Section != "totals")
             {
                 continue;
             }
@@ -646,12 +789,12 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
             {
                 if (TryParseDecimal(amountTokens[index], out var amount))
                 {
-                    return amount;
+                    return (amount, line.NormalizedText);
                 }
             }
         }
 
-        return null;
+        return (null, null);
     }
 
     private static string ExtractItemName(string line)
@@ -667,6 +810,127 @@ public sealed partial class HeuristicReceiptParser : IReceiptParser
     {
         var match = VatRateRegex().Match(line);
         return match.Success ? match.Groups["vat"].Value : null;
+    }
+
+    private static string? ExtractVatCode(string line)
+    {
+        var match = SummaryCodeRegex().Match(line);
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private static decimal? ExtractPaymentsTotal(IEnumerable<OcrLine> lines)
+    {
+        var total = 0m;
+        var foundAny = false;
+        foreach (var line in lines.Where(line => line.Section == "payments" || line.LineType == OcrLineType.Payment))
+        {
+            var amounts = ExtractAmountTokens(line.NormalizedText);
+            if (amounts.Count == 0)
+            {
+                continue;
+            }
+
+            if (TryParseDecimal(amounts[^1], out var amount))
+            {
+                total += amount;
+                foundAny = true;
+            }
+        }
+
+        return foundAny ? decimal.Round(total, 2) : null;
+    }
+
+    private static IReadOnlyList<ReceiptPayment> ExtractPayments(IEnumerable<OcrLine> lines)
+    {
+        var payments = new List<ReceiptPayment>();
+        foreach (var line in lines.Where(line => line.Section == "payments" || line.LineType == OcrLineType.Payment))
+        {
+            var amounts = ExtractAmountTokens(line.NormalizedText);
+            if (amounts.Count == 0)
+            {
+                continue;
+            }
+
+            if (!TryParseDecimal(amounts[^1], out var amount))
+            {
+                continue;
+            }
+
+            payments.Add(new ReceiptPayment
+            {
+                Method = ExtractPaymentMethod(line.NormalizedText),
+                Amount = amount,
+                SourceLine = line.RawText.Length > 0 ? line.RawText : line.NormalizedText
+            });
+        }
+
+        return payments;
+    }
+
+    private static string ExtractPaymentMethod(string line)
+    {
+        if (line.Contains("KARTA", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Karta";
+        }
+
+        if (line.Contains("BON", StringComparison.OrdinalIgnoreCase) || line.Contains("SODEXO", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Bon";
+        }
+
+        if (line.Contains("GOT", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Gotowka";
+        }
+
+        return "Platnosc";
+    }
+
+    private static decimal? ExtractVatBreakdownTotal(IEnumerable<OcrLine> lines)
+    {
+        var total = 0m;
+        var foundAny = false;
+        foreach (var line in lines.Where(line =>
+                     line.Section == "tax-summary"
+                     && line.NormalizedText.Contains("SPRZED", StringComparison.OrdinalIgnoreCase)))
+        {
+            var amounts = ExtractAmountTokens(line.NormalizedText);
+            if (amounts.Count == 0)
+            {
+                continue;
+            }
+
+            if (TryParseDecimal(amounts[^1], out var amount))
+            {
+                total += amount;
+                foundAny = true;
+            }
+        }
+
+        return foundAny ? decimal.Round(total, 2) : null;
+    }
+
+    private static decimal? ExtractDeclaredSubtotal(IEnumerable<OcrLine> lines)
+    {
+        foreach (var line in lines.Reverse())
+        {
+            if (line.Section != "tax-summary" || !line.NormalizedText.Contains("SUMA PT", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var amounts = ExtractAmountTokens(line.NormalizedText);
+            for (var index = amounts.Count - 1; index >= 0; index--)
+            {
+                if (TryParseDecimal(amounts[index], out var amount))
+                {
+                    return amount;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static bool TryParseDecimal(string value, out decimal result)

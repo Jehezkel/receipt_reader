@@ -9,4 +9,5 @@ public sealed class AiEnrichmentResult
     public bool WasApplied { get; init; }
     public string Provider { get; init; } = "disabled";
     public string Details { get; init; } = string.Empty;
+    public string? TriggerReason { get; init; }
 }

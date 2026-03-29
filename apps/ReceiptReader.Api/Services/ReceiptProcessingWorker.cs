@@ -69,6 +69,9 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                     QualityScore = ocrResult.QualityScore,
                     AppliedFilters = ocrResult.AppliedFilters.ToArray(),
                     PreprocessNotes = ocrResult.PreprocessNotes,
+                    Variants = ocrResult.Variants,
+                    SelectedVariantId = ocrResult.SelectedVariantId,
+                    SectionConfidences = ocrResult.SectionConfidences,
                     ImagePreparation = receipt.ImagePreparation
                 };
                 receipt.ProcessingSteps.Add(new ProcessingStep
@@ -82,10 +85,54 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                 var parsed = _receiptParser.Parse(ocrResult);
                 receipt.ReceiptSummary = parsed.Summary;
                 receipt.Items = parsed.Items.ToList();
+                receipt.Payments = parsed.Payments.ToList();
                 receipt.ProcessingSteps.AddRange(parsed.Steps);
 
                 var parserConsistency = _receiptConsistencyValidator.Validate(receipt.ReceiptSummary, receipt.Items);
                 ApplyConsistency(receipt, parserConsistency, "Parser consistency validation completed.");
+
+                if (ShouldAttemptAiReconstruction(ocrResult, parserConsistency, receipt.Items))
+                {
+                    receipt.Job.Stage = ProcessingStage.AiReconstruction;
+                    var aiInput = new ReceiptParseResult
+                    {
+                        Summary = receipt.ReceiptSummary,
+                        Items = receipt.Items,
+                        Payments = receipt.Payments,
+                        Steps = parsed.Steps,
+                        Sections = parsed.Sections
+                    };
+                    var aiEnriched = await _aiEnrichmentService.EnrichAsync(ocrResult, aiInput, stoppingToken);
+                    receipt.AiWasTriggeredBecause = aiEnriched.TriggerReason;
+                    var candidateItems = aiEnriched.Items.ToList();
+                    var candidateSummary = aiEnriched.Summary;
+                    var aiConsistency = _receiptConsistencyValidator.Validate(candidateSummary, candidateItems);
+
+                    if (ShouldAcceptAiResult(receipt.Consistency, receipt.Items, aiConsistency, candidateItems))
+                    {
+                        receipt.ReceiptSummary = candidateSummary;
+                        receipt.Items = candidateItems;
+                        ApplyConsistency(receipt, aiConsistency, "AI reconstruction consistency validation completed.");
+                    }
+
+                    receipt.ProcessingSteps.Add(new ProcessingStep
+                    {
+                        Stage = ProcessingStage.AiReconstruction,
+                        Status = aiEnriched.WasApplied ? "Completed" : "Skipped",
+                        Details = aiEnriched.Details,
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+                }
+                else
+                {
+                    receipt.ProcessingSteps.Add(new ProcessingStep
+                    {
+                        Stage = ProcessingStage.AiReconstruction,
+                        Status = "Skipped",
+                        Details = "AI reconstruction skipped because OCR and parser signals were stable enough.",
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+                }
 
                 receipt.Job.Stage = ProcessingStage.DeterministicRepair;
                 var repaired = _receiptRepairService.Repair(receipt.ReceiptSummary, receipt.Items);
@@ -104,46 +151,6 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                     Details = repaired.Details,
                     Timestamp = DateTimeOffset.UtcNow
                 });
-
-                if (repairedConsistency.ConsistencyStatus is ReceiptConsistencyStatus.Exact or ReceiptConsistencyStatus.ToleranceMatch)
-                {
-                    receipt.ProcessingSteps.Add(new ProcessingStep
-                    {
-                        Stage = ProcessingStage.AiEnrichment,
-                        Status = "Skipped",
-                        Details = "Gemini skipped because deterministic parsing already balanced the receipt.",
-                        Timestamp = DateTimeOffset.UtcNow
-                    });
-                }
-                else
-                {
-                    receipt.Job.Stage = ProcessingStage.AiEnrichment;
-                    var aiInput = new ReceiptParseResult
-                    {
-                        Summary = receipt.ReceiptSummary,
-                        Items = receipt.Items,
-                        Steps = parsed.Steps
-                    };
-                    var aiEnriched = await _aiEnrichmentService.EnrichAsync(ocrResult, aiInput, stoppingToken);
-                    var candidateItems = aiEnriched.Items.ToList();
-                    var candidateSummary = aiEnriched.Summary;
-                    var aiConsistency = _receiptConsistencyValidator.Validate(candidateSummary, candidateItems);
-
-                    if (ShouldAcceptAiResult(receipt.Consistency, receipt.Items, aiConsistency, candidateItems))
-                    {
-                        receipt.ReceiptSummary = candidateSummary;
-                        receipt.Items = candidateItems;
-                        ApplyConsistency(receipt, aiConsistency, "AI consistency validation completed.");
-                    }
-
-                    receipt.ProcessingSteps.Add(new ProcessingStep
-                    {
-                        Stage = ProcessingStage.AiEnrichment,
-                        Status = aiEnriched.WasApplied ? "Completed" : "Skipped",
-                        Details = aiEnriched.Details,
-                        Timestamp = DateTimeOffset.UtcNow
-                    });
-                }
 
                 receipt.Job.Stage = ProcessingStage.Completed;
                 receipt.Job.FinishedAt = DateTimeOffset.UtcNow;
@@ -256,5 +263,23 @@ public sealed class ReceiptProcessingWorker : BackgroundService
 
         return aiDifference <= currentDifference
             && (aiConsistency.ConsistencyStatus is ReceiptConsistencyStatus.Exact or ReceiptConsistencyStatus.ToleranceMatch);
+    }
+
+    private static bool ShouldAttemptAiReconstruction(
+        OcrResult ocrResult,
+        ReceiptConsistencyResult parserConsistency,
+        IReadOnlyList<ReceiptItem> items)
+    {
+        if (parserConsistency.ConsistencyStatus is ReceiptConsistencyStatus.Exact or ReceiptConsistencyStatus.ToleranceMatch)
+        {
+            return false;
+        }
+
+        var lowQuality = ocrResult.QualityScore < 0.72;
+        var lowSectionConfidence = ocrResult.SectionConfidences.Any(section => section.Confidence < 0.7 && section.Section is "items" or "totals" or "payments");
+        var variantConflicts = ocrResult.Variants.Count > 1;
+        var uncertainItems = items.Any(item => item.ParseWarnings.Count > 0 || item.Confidence < 0.65);
+
+        return lowQuality || lowSectionConfidence || variantConflicts || uncertainItems;
     }
 }

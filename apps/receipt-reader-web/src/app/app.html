@@ -7,15 +7,25 @@
         Angular PWA uploads the photo, .NET API orchestrates the pipeline, Go OCR
         performs the first pass, and Gemini optionally refines uncertain fields.
       </p>
+      <div class="hero-badges" aria-label="Product highlights">
+        <span>Mobile capture</span>
+        <span>OCR pipeline</span>
+        <span>Audit-ready archive</span>
+      </div>
     </div>
     <div class="hero-panel">
-      <p class="panel-label">Pipeline</p>
+      <div class="panel-topline">
+        <p class="panel-label">Pipeline</p>
+        <span class="panel-chip">Live stack</span>
+      </div>
+      <p class="panel-metric">04 signal stages</p>
       <ol>
         <li>Capture or upload an image</li>
         <li>OCR and heuristic parsing</li>
         <li>Optional Gemini refinement</li>
         <li>Archive the receipt with confidence markers</li>
       </ol>
+      <p class="panel-note">Built to feel like a compact control room, not a generic upload form.</p>
     </div>
   </section>
 
@@ -33,11 +43,13 @@
 
       <label class="upload-zone">
         <input type="file" accept="image/*" capture="environment" (change)="onFileSelected($event)" />
-        <span>Tap to use the camera or choose an image from the phone</span>
+        <span class="upload-zone-title">Drop in a receipt frame</span>
+        <span class="upload-zone-copy">Tap to use the camera or choose an image from the phone</span>
       </label>
 
       <button type="button" class="primary-button" [disabled]="isUploading()" (click)="uploadReceipt()">
-        Send for analysis
+        <span>Send for analysis</span>
+        <span class="button-arrow">↗</span>
       </button>
 
       <p class="status-message">{{ statusMessage() }}</p>
@@ -61,7 +73,10 @@
           <p class="card-kicker">Archive</p>
           <h2>Processed receipts</h2>
         </div>
-        <button type="button" class="ghost-button" (click)="refreshArchive()">Refresh</button>
+        <button type="button" class="ghost-button" (click)="refreshArchive()">
+          <span>Refresh</span>
+          <span class="button-arrow">⟲</span>
+        </button>
       </div>
 
       @if (isLoadingArchive()) {
@@ -130,7 +145,7 @@
           </div>
           <div>
             <span>Items total</span>
-            <strong>{{ receipt.consistency.calculatedItemsTotalAfterDiscounts ?? receipt.consistency.calculatedItemsTotal ?? 'Pending' }} PLN</strong>
+            <strong>{{ getItemsTotal(receipt) ?? 'Pending' }} PLN</strong>
           </div>
           <div>
             <span>Difference</span>
@@ -141,6 +156,49 @@
             <strong>{{ receipt.consistency.consistencyStatus }}</strong>
           </div>
         </div>
+
+        <div class="consistency-panel">
+          <div>
+            <span>Payments total</span>
+            <strong>{{ receipt.receiptSummary.paymentsTotal ?? 'n/a' }} PLN</strong>
+          </div>
+          <div>
+            <span>VAT buckets</span>
+            <strong>{{ receipt.receiptSummary.vatBreakdownTotal ?? 'n/a' }} PLN</strong>
+          </div>
+          <div>
+            <span>OCR variant</span>
+            <strong>{{ receipt.selectedOcrVariant || 'n/a' }}</strong>
+          </div>
+          <div>
+            <span>Total evidence</span>
+            <strong>{{ receipt.totalEvidence || 'n/a' }}</strong>
+          </div>
+        </div>
+
+        @if (receipt.payments.length > 0) {
+          <div class="ocr-box">
+            <p class="card-kicker">Payments</p>
+            <div class="ocr-line-list">
+              @for (payment of receipt.payments; track payment.sourceLine) {
+                <div class="ocr-line-row">
+                  <span class="mini-pill">{{ payment.method }}</span>
+                  <div>
+                    <strong>{{ payment.amount ?? 'n/a' }} PLN</strong>
+                    <p>{{ payment.sourceLine }}</p>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        @if (receipt.aiWasTriggeredBecause) {
+          <div class="ocr-box">
+            <p class="card-kicker">AI trigger</p>
+            <p>{{ receipt.aiWasTriggeredBecause }}</p>
+          </div>
+        }
       } @else {
         <p class="empty-state">Choose a receipt from the archive to inspect the extracted data.</p>
       }
@@ -172,6 +230,12 @@
                 </strong>
                 @for (sourceLine of item.sourceLines; track sourceLine) {
                   <p>{{ sourceLine }}</p>
+                }
+                @if (item.evidenceLines.length > 0) {
+                  <p>Evidence: {{ item.evidenceLines.join(' | ') }}</p>
+                }
+                @if (item.recognitionHints.length > 0) {
+                  <p>Hints: {{ item.recognitionHints.join(', ') }}</p>
                 }
                 @for (warning of item.parseWarnings; track warning) {
                   <p class="warning-text">{{ warning }}</p>
@@ -205,10 +269,32 @@
                 <div>
                   <strong>{{ line.normalizedText }}</strong>
                   <p>{{ line.rawText }}</p>
+                  <p>Section: {{ line.section }} | Variant: {{ line.variantId }}</p>
+                  @if (line.alternateTexts.length > 0) {
+                    <p>Alternates: {{ line.alternateTexts.join(' | ') }}</p>
+                  }
                 </div>
               </div>
             } @empty {
               <p class="empty-state">No OCR line debug available.</p>
+            }
+          </div>
+        </div>
+
+        <div class="ocr-box">
+          <p class="card-kicker">OCR variants</p>
+          <div class="ocr-line-list">
+            @for (variant of receipt.ocrVariants; track variant.variantId) {
+              <div class="ocr-line-row">
+                <span class="mini-pill">{{ variant.section }}</span>
+                <div>
+                  <strong>{{ variant.variantId }} / {{ variant.variantType }}</strong>
+                  <p>PSM {{ variant.psm }} | score {{ variant.qualityScore * 100 | number: '1.0-0' }}% | readability {{ variant.estimatedReadabilityScore * 100 | number: '1.0-0' }}%</p>
+                  <p>{{ variant.appliedFilters.join(', ') }}</p>
+                </div>
+              </div>
+            } @empty {
+              <p class="empty-state">No OCR variants recorded.</p>
             }
           </div>
         </div>

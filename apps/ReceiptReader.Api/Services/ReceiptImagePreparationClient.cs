@@ -60,6 +60,24 @@ public sealed class ReceiptImagePreparationClient : IReceiptImagePreparationClie
                             Y = payload.Metadata.CropBox.Y,
                             Width = payload.Metadata.CropBox.Width,
                             Height = payload.Metadata.CropBox.Height
+                        },
+                    BodyCropBox = payload.Metadata.BodyCropBox is null
+                        ? null
+                        : new BoundingBox
+                        {
+                            X = payload.Metadata.BodyCropBox.X,
+                            Y = payload.Metadata.BodyCropBox.Y,
+                            Width = payload.Metadata.BodyCropBox.Width,
+                            Height = payload.Metadata.BodyCropBox.Height
+                        },
+                    FooterCropBox = payload.Metadata.FooterCropBox is null
+                        ? null
+                        : new BoundingBox
+                        {
+                            X = payload.Metadata.FooterCropBox.X,
+                            Y = payload.Metadata.FooterCropBox.Y,
+                            Width = payload.Metadata.FooterCropBox.Width,
+                            Height = payload.Metadata.FooterCropBox.Height
                         }
                 }
             };
@@ -149,6 +167,12 @@ public sealed class ReceiptImagePreparationClient : IReceiptImagePreparationClie
 
         [JsonPropertyName("cropBox")]
         public PrepareClientBoundingBox? CropBox { get; set; }
+
+        [JsonPropertyName("bodyCropBox")]
+        public PrepareClientBoundingBox? BodyCropBox { get; set; }
+
+        [JsonPropertyName("footerCropBox")]
+        public PrepareClientBoundingBox? FooterCropBox { get; set; }
     }
 
     private sealed class PrepareClientBoundingBox

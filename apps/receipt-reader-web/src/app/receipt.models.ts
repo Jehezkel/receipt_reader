@@ -4,6 +4,10 @@ export interface ReceiptSummary {
   purchaseDate?: string | null;
   currency: string;
   totalGross?: number | null;
+  paymentsTotal?: number | null;
+  vatBreakdownTotal?: number | null;
+  declaredSubtotal?: number | null;
+  totalSourceLine?: string | null;
   confidence: number;
   totalMatchesItems: boolean;
   needsReview: boolean;
@@ -13,7 +17,11 @@ export interface ReceiptConsistencyResult {
   declaredTotal?: number | null;
   calculatedItemsTotal?: number | null;
   calculatedItemsTotalAfterDiscounts?: number | null;
+  paymentsTotal?: number | null;
+  vatBreakdownTotal?: number | null;
   differenceToDeclaredTotal?: number | null;
+  differenceToPaymentsTotal?: number | null;
+  differenceToVatBreakdownTotal?: number | null;
   consistencyStatus: 'Exact' | 'ToleranceMatch' | 'Mismatch' | 'InsufficientData';
   needsReview: boolean;
 }
@@ -28,12 +36,23 @@ export interface ReceiptItem {
   confidence: number;
   arithmeticConfidence: number;
   candidateKind: 'Standard' | 'Weighted' | 'MultiLine' | 'DiscountAdjusted' | 'Repaired' | 'Excluded';
+  section: string;
+  vatCode?: string | null;
   sourceLine: string;
   sourceLines: string[];
+  evidenceLines: string[];
+  recognitionHints: string[];
+  wasReconstructedFromMultipleLines: boolean;
   wasAiCorrected: boolean;
   excludedByBalancer: boolean;
   repairReason?: string | null;
   parseWarnings: string[];
+}
+
+export interface ReceiptPayment {
+  method: string;
+  amount?: number | null;
+  sourceLine: string;
 }
 
 export interface OcrLine {
@@ -44,6 +63,31 @@ export interface OcrLine {
   confidence: number;
   characterCount: number;
   lineType: 'Unknown' | 'Header' | 'ItemCandidate' | 'Subtotal' | 'Total' | 'Vat' | 'Discount' | 'Payment' | 'Technical';
+  section: string;
+  variantId: string;
+  alternateTexts: string[];
+}
+
+export interface OcrVariantArtifact {
+  variantId: string;
+  variantType: string;
+  section: string;
+  psm: number;
+  cropBox?: { x: number; y: number; width: number; height: number } | null;
+  rotationDegrees: number;
+  appliedFilters: string[];
+  estimatedReadabilityScore: number;
+  qualityScore: number;
+  selected: boolean;
+  rawText: string;
+  normalizedText: string;
+}
+
+export interface SectionConfidenceArtifact {
+  section: string;
+  confidence: number;
+  selectedVariantId?: string | null;
+  notes?: string | null;
 }
 
 export interface ProcessingStep {
@@ -74,10 +118,16 @@ export interface ReceiptResponse {
   rawOcrText: string;
   normalizedLines: string[];
   ocrLines: OcrLine[];
+  ocrVariants: OcrVariantArtifact[];
+  selectedOcrVariant?: string | null;
+  sectionConfidences: SectionConfidenceArtifact[];
   receiptSummary: ReceiptSummary;
   consistency: ReceiptConsistencyResult;
   items: ReceiptItem[];
+  payments: ReceiptPayment[];
   confidence: number;
+  aiWasTriggeredBecause?: string | null;
+  totalEvidence?: string | null;
   processingSteps: ProcessingStep[];
 }
 

@@ -9,5 +9,8 @@ public sealed class OcrLine
     public double Confidence { get; set; }
     public int CharacterCount { get; set; }
     public OcrLineType LineType { get; set; } = OcrLineType.Unknown;
+    public string Section { get; set; } = "unknown";
+    public string VariantId { get; set; } = "selected";
+    public IReadOnlyList<string> AlternateTexts { get; set; } = [];
     public BoundingBox? BoundingBox { get; set; }
 }

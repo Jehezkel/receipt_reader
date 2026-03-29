@@ -16,4 +16,6 @@ public sealed class ImagePreparationArtifact
     public string[] AppliedFilters { get; set; } = [];
     public string? Notes { get; set; }
     public BoundingBox? CropBox { get; set; }
+    public BoundingBox? BodyCropBox { get; set; }
+    public BoundingBox? FooterCropBox { get; set; }
 }
