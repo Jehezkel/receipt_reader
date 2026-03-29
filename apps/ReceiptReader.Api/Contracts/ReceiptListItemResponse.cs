@@ -10,6 +10,8 @@ public sealed class ReceiptListItemResponse
     public string? MerchantName { get; init; }
     public DateOnly? PurchaseDate { get; init; }
     public decimal? TotalGross { get; init; }
+    public bool NeedsReview { get; init; }
+    public ReceiptConsistencyStatus ConsistencyStatus { get; init; }
     public double Confidence { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
 }

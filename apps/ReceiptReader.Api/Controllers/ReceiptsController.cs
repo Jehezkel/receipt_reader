@@ -105,6 +105,8 @@ public sealed class ReceiptsController : ControllerBase
             MerchantName = receipt.ReceiptSummary.MerchantName,
             PurchaseDate = receipt.ReceiptSummary.PurchaseDate,
             TotalGross = receipt.ReceiptSummary.TotalGross,
+            NeedsReview = receipt.Consistency.NeedsReview,
+            ConsistencyStatus = receipt.Consistency.ConsistencyStatus,
             Confidence = receipt.ReceiptSummary.Confidence,
             CreatedAt = receipt.CreatedAt
         };
@@ -118,7 +120,9 @@ public sealed class ReceiptsController : ControllerBase
             CreatedAt = receipt.CreatedAt,
             RawOcrText = receipt.OcrArtifact?.RawText ?? string.Empty,
             NormalizedLines = receipt.OcrArtifact?.NormalizedText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [],
+            OcrLines = receipt.OcrArtifact?.Lines ?? [],
             ReceiptSummary = receipt.ReceiptSummary,
+            Consistency = receipt.Consistency,
             Items = receipt.Items,
             Confidence = receipt.ReceiptSummary.Confidence,
             ProcessingSteps = receipt.ProcessingSteps

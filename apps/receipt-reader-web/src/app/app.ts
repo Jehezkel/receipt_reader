@@ -78,6 +78,10 @@ export class App {
     this.loadArchive();
   }
 
+  protected formatStatus(status: string): string {
+    return status === 'CompletedWithWarnings' ? 'Needs review' : status;
+  }
+
   private loadArchive(): void {
     this.isLoadingArchive.set(true);
     this.api.listReceipts()

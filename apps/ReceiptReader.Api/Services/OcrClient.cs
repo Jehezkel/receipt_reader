@@ -39,6 +39,8 @@ public sealed class OcrClient : IOcrClient
                 NormalizedText = payload.NormalizedText,
                 Lines = payload.Lines.Select(line => new Models.OcrLine
                 {
+                    RawText = line.Text,
+                    NormalizedText = line.Text,
                     Text = line.Text,
                     Confidence = line.Confidence,
                     BoundingBox = line.BoundingBox is null ? null : new Models.BoundingBox
@@ -71,7 +73,13 @@ public sealed class OcrClient : IOcrClient
                 RawText = fallbackText,
                 NormalizedText = fallbackText,
                 Lines = fallbackText.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(line => new Models.OcrLine { Text = line, Confidence = 0.45 })
+                    .Select(line => new Models.OcrLine
+                    {
+                        RawText = line,
+                        NormalizedText = line,
+                        Text = line,
+                        Confidence = 0.45
+                    })
                     .ToList(),
                 QualityScore = 0.45,
                 Provider = "fallback"

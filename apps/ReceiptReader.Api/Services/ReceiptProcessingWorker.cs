@@ -9,6 +9,7 @@ public sealed class ReceiptProcessingWorker : BackgroundService
     private readonly IReceiptRepository _repository;
     private readonly IOcrClient _ocrClient;
     private readonly IReceiptParser _receiptParser;
+    private readonly IReceiptConsistencyValidator _receiptConsistencyValidator;
     private readonly IAiEnrichmentService _aiEnrichmentService;
     private readonly ILogger<ReceiptProcessingWorker> _logger;
 
@@ -17,6 +18,7 @@ public sealed class ReceiptProcessingWorker : BackgroundService
         IReceiptRepository repository,
         IOcrClient ocrClient,
         IReceiptParser receiptParser,
+        IReceiptConsistencyValidator receiptConsistencyValidator,
         IAiEnrichmentService aiEnrichmentService,
         ILogger<ReceiptProcessingWorker> logger)
     {
@@ -24,6 +26,7 @@ public sealed class ReceiptProcessingWorker : BackgroundService
         _repository = repository;
         _ocrClient = ocrClient;
         _receiptParser = receiptParser;
+        _receiptConsistencyValidator = receiptConsistencyValidator;
         _aiEnrichmentService = aiEnrichmentService;
         _logger = logger;
     }
@@ -75,10 +78,22 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                 receipt.Items = parsed.Items.ToList();
                 receipt.ProcessingSteps.AddRange(parsed.Steps);
 
+                var parserConsistency = _receiptConsistencyValidator.Validate(receipt.ReceiptSummary, receipt.Items);
+                ApplyConsistency(receipt, parserConsistency, "Parser consistency validation completed.");
+
                 receipt.Job.Stage = ProcessingStage.AiEnrichment;
                 var aiEnriched = await _aiEnrichmentService.EnrichAsync(ocrResult, parsed, stoppingToken);
-                receipt.ReceiptSummary = aiEnriched.Summary;
-                receipt.Items = aiEnriched.Items.ToList();
+                var candidateItems = aiEnriched.Items.ToList();
+                var candidateSummary = aiEnriched.Summary;
+                var aiConsistency = _receiptConsistencyValidator.Validate(candidateSummary, candidateItems);
+
+                if (ShouldAcceptAiResult(receipt.Consistency, receipt.Items, aiConsistency, candidateItems))
+                {
+                    receipt.ReceiptSummary = candidateSummary;
+                    receipt.Items = candidateItems;
+                    ApplyConsistency(receipt, aiConsistency, "AI consistency validation completed.");
+                }
+
                 receipt.ProcessingSteps.Add(new ProcessingStep
                 {
                     Stage = ProcessingStage.AiEnrichment,
@@ -89,9 +104,11 @@ public sealed class ReceiptProcessingWorker : BackgroundService
 
                 receipt.Job.Stage = ProcessingStage.Completed;
                 receipt.Job.FinishedAt = DateTimeOffset.UtcNow;
-                receipt.Status = receipt.ReceiptSummary.TotalMatchesItems
-                    ? ReceiptStatus.Completed
-                    : ReceiptStatus.CompletedWithWarnings;
+                receipt.Status = receipt.Consistency.NeedsReview
+                    ? ReceiptStatus.CompletedWithWarnings
+                    : receipt.ReceiptSummary.TotalMatchesItems
+                        ? ReceiptStatus.Completed
+                        : ReceiptStatus.CompletedWithWarnings;
                 receipt.ProcessingSteps.Add(new ProcessingStep
                 {
                     Stage = ProcessingStage.Completed,
@@ -119,5 +136,81 @@ public sealed class ReceiptProcessingWorker : BackgroundService
                 await _repository.UpdateAsync(receipt, stoppingToken);
             }
         }
+    }
+
+    private static void ApplyConsistency(ReceiptRecord receipt, ReceiptConsistencyResult consistency, string details)
+    {
+        receipt.Consistency = consistency;
+        receipt.ReceiptSummary.TotalMatchesItems = consistency.ConsistencyStatus is ReceiptConsistencyStatus.Exact or ReceiptConsistencyStatus.ToleranceMatch;
+        receipt.ReceiptSummary.NeedsReview = consistency.NeedsReview;
+        receipt.ReceiptSummary.Confidence = AdjustSummaryConfidence(receipt.ReceiptSummary.Confidence, consistency.ConsistencyStatus, consistency.NeedsReview);
+        receipt.ProcessingSteps.Add(new ProcessingStep
+        {
+            Stage = ProcessingStage.Validated,
+            Status = consistency.NeedsReview ? "Warning" : "Completed",
+            Details = $"{details} Status: {consistency.ConsistencyStatus}, difference: {consistency.DifferenceToDeclaredTotal?.ToString("0.00") ?? "n/a"}.",
+            Timestamp = DateTimeOffset.UtcNow
+        });
+    }
+
+    private static double AdjustSummaryConfidence(double baseConfidence, ReceiptConsistencyStatus status, bool needsReview)
+    {
+        var adjusted = status switch
+        {
+            ReceiptConsistencyStatus.Exact => Math.Min(0.99, baseConfidence + 0.08),
+            ReceiptConsistencyStatus.ToleranceMatch => Math.Min(0.94, baseConfidence + 0.03),
+            ReceiptConsistencyStatus.InsufficientData => Math.Max(0.35, baseConfidence - 0.16),
+            _ => Math.Max(0.25, baseConfidence - 0.22)
+        };
+
+        if (needsReview)
+        {
+            adjusted = Math.Max(0.2, adjusted - 0.05);
+        }
+
+        return Math.Round(adjusted, 2);
+    }
+
+    private static bool ShouldAcceptAiResult(
+        ReceiptConsistencyResult currentConsistency,
+        IReadOnlyList<ReceiptItem> currentItems,
+        ReceiptConsistencyResult aiConsistency,
+        IReadOnlyList<ReceiptItem> aiItems)
+    {
+        var currentScore = currentConsistency.ConsistencyStatus switch
+        {
+            ReceiptConsistencyStatus.Exact => 3,
+            ReceiptConsistencyStatus.ToleranceMatch => 2,
+            ReceiptConsistencyStatus.InsufficientData => 1,
+            _ => 0
+        };
+
+        var aiScore = aiConsistency.ConsistencyStatus switch
+        {
+            ReceiptConsistencyStatus.Exact => 3,
+            ReceiptConsistencyStatus.ToleranceMatch => 2,
+            ReceiptConsistencyStatus.InsufficientData => 1,
+            _ => 0
+        };
+
+        if (aiScore > currentScore)
+        {
+            return true;
+        }
+
+        if (aiScore < currentScore)
+        {
+            return false;
+        }
+
+        if (aiItems.Count < currentItems.Count)
+        {
+            return false;
+        }
+
+        var currentDifference = Math.Abs(currentConsistency.DifferenceToDeclaredTotal ?? decimal.MaxValue);
+        var aiDifference = Math.Abs(aiConsistency.DifferenceToDeclaredTotal ?? decimal.MaxValue);
+
+        return aiDifference <= currentDifference;
     }
 }

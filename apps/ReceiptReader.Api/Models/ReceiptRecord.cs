@@ -10,6 +10,7 @@ public sealed class ReceiptRecord
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public ProcessingJob Job { get; set; } = new();
     public ReceiptSummary ReceiptSummary { get; set; } = new();
+    public ReceiptConsistencyResult Consistency { get; set; } = new();
     public List<ReceiptItem> Items { get; set; } = [];
     public OcrArtifact? OcrArtifact { get; set; }
     public List<ProcessingStep> ProcessingSteps { get; set; } = [];

@@ -77,7 +77,8 @@
                 <p>{{ receipt.purchaseDate || 'Date pending' }}</p>
               </div>
               <div class="archive-meta">
-                <span>{{ receipt.status }}</span>
+                <span [class.review-text]="receipt.needsReview">{{ formatStatus(receipt.status) }}</span>
+                <span class="consistency-chip" [class.review-chip]="receipt.needsReview">{{ receipt.consistencyStatus }}</span>
                 <strong>{{ receipt.totalGross ?? '...' }} PLN</strong>
               </div>
             </button>
@@ -95,12 +96,14 @@
           <h2>Receipt detail</h2>
         </div>
         @if (selectedReceipt()) {
-          <span class="status-pill active">{{ selectedReceipt()?.status }}</span>
+          <span class="status-pill" [class.active]="!selectedReceipt()?.consistency?.needsReview" [class.review-pill]="selectedReceipt()?.consistency?.needsReview">
+            {{ selectedReceipt()?.consistency?.needsReview ? 'Wymaga weryfikacji' : selectedReceipt()?.status }}
+          </span>
         }
       </div>
 
       @if (selectedReceipt(); as receipt) {
-        <img class="receipt-image" [src]="'http://localhost:5186' + receipt.imageUrl" alt="Uploaded receipt image" />
+        <img class="receipt-image" [src]="receipt.imageUrl" alt="Uploaded receipt image" />
         <div class="summary-grid">
           <div>
             <span>Merchant</span>
@@ -117,6 +120,25 @@
           <div>
             <span>Total</span>
             <strong>{{ receipt.receiptSummary.totalGross ?? 'Pending' }} {{ receipt.receiptSummary.currency }}</strong>
+          </div>
+        </div>
+
+        <div class="consistency-panel" [class.needs-review]="receipt.consistency.needsReview">
+          <div>
+            <span>Declared total</span>
+            <strong>{{ receipt.consistency.declaredTotal ?? 'Pending' }} PLN</strong>
+          </div>
+          <div>
+            <span>Items total</span>
+            <strong>{{ receipt.consistency.calculatedItemsTotalAfterDiscounts ?? receipt.consistency.calculatedItemsTotal ?? 'Pending' }} PLN</strong>
+          </div>
+          <div>
+            <span>Difference</span>
+            <strong>{{ receipt.consistency.differenceToDeclaredTotal ?? 'n/a' }} PLN</strong>
+          </div>
+          <div>
+            <span>Status</span>
+            <strong>{{ receipt.consistency.consistencyStatus }}</strong>
           </div>
         </div>
       } @else {
@@ -140,14 +162,28 @@
       @if (selectedReceipt(); as receipt) {
         <div class="items-list">
           @for (item of receipt.items; track item.sourceLine + item.name) {
-            <div class="item-row">
+            <div class="item-row" [class.item-warning]="item.parseWarnings.length > 0">
               <div>
-                <strong>{{ item.name }}</strong>
-                <p>{{ item.sourceLine }}</p>
+                <strong>
+                  {{ item.name }}
+                  @if (item.wasAiCorrected) {
+                    <span class="mini-pill ai-pill">AI corrected</span>
+                  }
+                </strong>
+                @for (sourceLine of item.sourceLines; track sourceLine) {
+                  <p>{{ sourceLine }}</p>
+                }
+                @for (warning of item.parseWarnings; track warning) {
+                  <p class="warning-text">{{ warning }}</p>
+                }
               </div>
               <div class="item-pricing">
                 <span>{{ item.quantity ?? 1 }} x {{ item.unitPrice ?? item.totalPrice ?? 0 }}</span>
                 <strong>{{ item.totalPrice ?? 0 }} PLN</strong>
+                @if (item.discount) {
+                  <span>Discount: {{ item.discount }} PLN</span>
+                }
+                <span class="confidence-inline">{{ item.confidence * 100 | number: '1.0-0' }}%</span>
               </div>
             </div>
           } @empty {
@@ -158,6 +194,23 @@
         <div class="ocr-box">
           <p class="card-kicker">Raw OCR</p>
           <pre>{{ receipt.rawOcrText || 'No OCR text yet.' }}</pre>
+        </div>
+
+        <div class="ocr-box">
+          <p class="card-kicker">OCR line debug</p>
+          <div class="ocr-line-list">
+            @for (line of receipt.ocrLines; track line.rawText + line.lineType) {
+              <div class="ocr-line-row">
+                <span class="mini-pill">{{ line.lineType }}</span>
+                <div>
+                  <strong>{{ line.normalizedText }}</strong>
+                  <p>{{ line.rawText }}</p>
+                </div>
+              </div>
+            } @empty {
+              <p class="empty-state">No OCR line debug available.</p>
+            }
+          </div>
         </div>
       } @else {
         <p class="empty-state">No receipt selected.</p>

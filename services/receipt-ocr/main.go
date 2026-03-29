@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 type app struct {
@@ -178,7 +179,9 @@ func normalizeOCRText(raw string) string {
 	replacements := strings.NewReplacer(
 		"\r\n", "\n",
 		"\r", "\n",
-		"|", "I",
+		"|", "1",
+		" ,", ",",
+		" .", ".",
 	)
 
 	text := replacements.Replace(raw)
@@ -186,6 +189,8 @@ func normalizeOCRText(raw string) string {
 	normalized := make([]string, 0, len(lines))
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
+		line = normalizeDigitCandidates(line)
+		line = noisyChars.ReplaceAllString(line, " ")
 		line = multipleSpaces.ReplaceAllString(line, " ")
 		if line == "" {
 			continue
@@ -286,4 +291,25 @@ func maxInt(a, b int) int {
 var (
 	multipleSpaces = regexp.MustCompile(`\s+`)
 	alphaRegex     = regexp.MustCompile(`[A-Za-zĄĆĘŁŃÓŚŹŻąćęłńóśźż]{3,}`)
+	noisyChars     = regexp.MustCompile(`[^\p{L}\p{N}\s,.\-:/xX*]`)
 )
+
+func normalizeDigitCandidates(value string) string {
+	chars := []rune(value)
+	for index := 1; index < len(chars)-1; index++ {
+		if !unicode.IsDigit(chars[index-1]) || !unicode.IsDigit(chars[index+1]) {
+			continue
+		}
+
+		switch chars[index] {
+		case 'O', 'o':
+			chars[index] = '0'
+		case 'B':
+			chars[index] = '8'
+		case 'I', 'l':
+			chars[index] = '1'
+		}
+	}
+
+	return string(chars)
+}

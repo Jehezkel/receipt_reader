@@ -12,6 +12,10 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://+:8080
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/publish ./
 RUN mkdir -p /app/AppData/uploads
 EXPOSE 8080

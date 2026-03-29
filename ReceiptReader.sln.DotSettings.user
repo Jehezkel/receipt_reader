@@ -1,0 +1,4 @@
+﻿<wpf:ResourceDictionary xml:space="preserve" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:s="clr-namespace:System;assembly=mscorlib" xmlns:ss="urn:shemas-jetbrains-com:settings-storage-xaml" xmlns:wpf="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+	<s:String x:Key="/Default/Environment/UnitTesting/UnitTestSessionStore/Sessions/=7517b376_002Dcd4a_002D4952_002Db6c0_002Dd1b248db1f70/@EntryIndexedValue">&lt;SessionState ContinuousTestingMode="0" IsActive="True" Name="LargeNettoReceipt_ShouldExtractSummary_Items_AndIgnorePayments" xmlns="urn:schemas-jetbrains-com:jetbrains-ut-session"&gt;
+  &lt;Project Location="/Users/ezechiel/repos/receipt_reader/tests/ReceiptReader.Api.IntegrationTests" Presentation="&amp;lt;tests&amp;gt;\&amp;lt;ReceiptReader.Api.IntegrationTests&amp;gt;" /&gt;
+&lt;/SessionState&gt;</s:String></wpf:ResourceDictionary>

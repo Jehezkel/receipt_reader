@@ -9,4 +9,5 @@ public sealed class ReceiptSummary
     public decimal? TotalGross { get; set; }
     public double Confidence { get; set; }
     public bool TotalMatchesItems { get; set; }
+    public bool NeedsReview { get; set; }
 }

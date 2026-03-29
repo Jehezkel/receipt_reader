@@ -163,6 +163,18 @@
   color: #176648;
 }
 
+.status-pill.review-pill,
+.consistency-chip.review-chip,
+.mini-pill.ai-pill,
+.item-row.item-warning {
+  border-color: rgba(182, 81, 43, 0.2);
+}
+
+.status-pill.review-pill {
+  background: rgba(191, 96, 57, 0.16);
+  color: #8c3f20;
+}
+
 .job-card,
 .ocr-box {
   margin-top: 1rem;
@@ -201,6 +213,27 @@
   text-align: right;
 }
 
+.review-text {
+  color: #8c3f20;
+}
+
+.consistency-chip,
+.mini-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(36, 48, 74, 0.08);
+  color: #354056;
+  font-size: 0.76rem;
+}
+
+.archive-meta {
+  display: grid;
+  gap: 0.25rem;
+}
+
 .receipt-image {
   width: 100%;
   max-height: 24rem;
@@ -220,6 +253,29 @@
   margin-top: 0.25rem;
 }
 
+.consistency-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.consistency-panel.needs-review {
+  background: rgba(255, 235, 222, 0.88);
+}
+
+.consistency-panel span {
+  color: #5a6272;
+}
+
+.consistency-panel strong {
+  display: block;
+  margin-top: 0.2rem;
+}
+
 .item-row {
   display: flex;
   justify-content: space-between;
@@ -228,12 +284,46 @@
   border-bottom: 1px solid rgba(48, 56, 78, 0.08);
 }
 
+.item-row.item-warning {
+  padding-inline: 0.75rem;
+  border-radius: 1rem;
+  background: rgba(255, 242, 232, 0.82);
+}
+
+.warning-text {
+  color: #9b4c28;
+}
+
+.confidence-inline {
+  color: #5a6272;
+  font-size: 0.82rem;
+}
+
 .ocr-box pre {
   margin: 0;
   white-space: pre-wrap;
   font-family: 'IBM Plex Mono', 'SFMono-Regular', monospace;
   font-size: 0.86rem;
   line-height: 1.5;
+}
+
+.ocr-line-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.ocr-line-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  align-items: start;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(48, 56, 78, 0.08);
+}
+
+.ocr-line-row p,
+.ocr-line-row strong {
+  margin: 0;
 }
 
 @media (min-width: 768px) {

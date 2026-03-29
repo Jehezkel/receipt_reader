@@ -6,7 +6,7 @@ import { CreateReceiptResponse, JobResponse, ReceiptListItem, ReceiptResponse } 
 @Injectable({ providedIn: 'root' })
 export class ReceiptApiService {
   private readonly http = inject(HttpClient);
-  private readonly apiBaseUrl = 'http://localhost:5186/api';
+  private readonly apiBaseUrl = '/api';
 
   uploadReceipt(file: File) {
     const formData = new FormData();

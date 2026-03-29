@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Diagnostics;
 using System.Text.Json;
 using ReceiptReader.Api.Configuration;
 using ReceiptReader.Api.Models;
@@ -37,11 +38,56 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             };
         }
 
-        var prompt = BuildPrompt(ocrResult, parsedReceipt);
+        var uncertainItems = parsedReceipt.Items
+            .Where(item => item.ParseWarnings.Count > 0 || item.Confidence < 0.65)
+            .Take(8)
+            .ToList();
+
+        var consistencyStatus = parsedReceipt.Summary.TotalMatchesItems
+            ? ReceiptConsistencyStatus.ToleranceMatch
+            : uncertainItems.Count > 0
+                ? ReceiptConsistencyStatus.Mismatch
+                : ReceiptConsistencyStatus.InsufficientData;
+
+        var tooLittleStructuredData = parsedReceipt.Items.Count < 3;
+        var needsAi = !tooLittleStructuredData
+            && consistencyStatus != ReceiptConsistencyStatus.InsufficientData
+            && uncertainItems.Count > 0;
+
+        if (!needsAi)
+        {
+            return new AiEnrichmentResult
+            {
+                Summary = parsedReceipt.Summary,
+                Items = parsedReceipt.Items,
+                WasApplied = false,
+                Details = tooLittleStructuredData
+                    ? "Gemini skipped because the parser did not extract enough structured items yet."
+                    : "Gemini skipped because there is not enough stable data to refine safely.",
+                Provider = "skipped"
+            };
+        }
+
+        var prompt = BuildPrompt(ocrResult, parsedReceipt, uncertainItems);
         var endpoint = $"https://generativelanguage.googleapis.com/v1beta/models/{_options.Model}:generateContent?key={_options.ApiKey}";
+        var promptLength = prompt.Length;
+        var relevantOcrLineCount = ocrResult.NormalizedText
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Count(line => IsRelevantPromptLine(line, uncertainItems));
+
+        _logger.LogInformation(
+            "Gemini enrichment starting. Model={Model}, timeout={TimeoutSeconds}s, parsedItems={ParsedItems}, uncertainItems={UncertainItems}, relevantPromptLines={RelevantPromptLines}, promptChars={PromptChars}, apiKeyPresent={ApiKeyPresent}.",
+            _options.Model,
+            _options.TimeoutSeconds,
+            parsedReceipt.Items.Count,
+            uncertainItems.Count,
+            relevantOcrLineCount,
+            promptLength,
+            !string.IsNullOrWhiteSpace(_options.ApiKey));
 
         for (var attempt = 0; attempt <= _options.MaxRetryCount; attempt++)
         {
+            var stopwatch = Stopwatch.StartNew();
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
@@ -61,6 +107,13 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                 });
 
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
+                stopwatch.Stop();
+
+                _logger.LogInformation(
+                    "Gemini responded. Attempt={Attempt}, elapsedMs={ElapsedMs}, statusCode={StatusCode}.",
+                    attempt + 1,
+                    stopwatch.ElapsedMilliseconds,
+                    (int)response.StatusCode);
                 response.EnsureSuccessStatusCode();
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
 
@@ -70,7 +123,17 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                     throw new InvalidOperationException("Gemini returned no text.");
                 }
 
-                var enriched = JsonSerializer.Deserialize<GeminiPayload>(candidateText, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                var jsonPayload = ExtractJsonPayload(candidateText);
+                GeminiPayload? enriched;
+                try
+                {
+                    enriched = JsonSerializer.Deserialize<GeminiPayload>(jsonPayload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+                }
+                catch (JsonException exception)
+                {
+                    _logger.LogWarning(exception, "Gemini returned non-parseable JSON payload preview: {PayloadPreview}", TruncateForLog(jsonPayload));
+                    throw;
+                }
                 if (enriched is null)
                 {
                     throw new InvalidOperationException("Gemini returned invalid JSON.");
@@ -86,20 +149,10 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
                         Currency = parsedReceipt.Summary.Currency,
                         TotalGross = enriched.TotalGross ?? parsedReceipt.Summary.TotalGross,
                         Confidence = Math.Min(0.98, parsedReceipt.Summary.Confidence + 0.08),
-                        TotalMatchesItems = parsedReceipt.Summary.TotalMatchesItems
+                        TotalMatchesItems = parsedReceipt.Summary.TotalMatchesItems,
+                        NeedsReview = parsedReceipt.Summary.NeedsReview
                     },
-                    Items = enriched.Items?.Count > 0
-                        ? enriched.Items.Select(item => new ReceiptItem
-                        {
-                            Name = item.Name,
-                            Quantity = item.Quantity,
-                            UnitPrice = item.UnitPrice,
-                            TotalPrice = item.TotalPrice,
-                            VatRate = item.VatRate,
-                            Confidence = 0.82,
-                            SourceLine = item.SourceLine ?? string.Empty
-                        }).ToList()
-                        : parsedReceipt.Items,
+                    Items = MergeItems(parsedReceipt.Items, enriched.Items),
                     WasApplied = true,
                     Provider = _options.Model,
                     Details = "Gemini refinement applied."
@@ -107,13 +160,21 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
             }
             catch (Exception exception)
             {
-                _logger.LogWarning(exception, "Gemini enrichment failed on attempt {Attempt}.", attempt + 1);
-                if (attempt == _options.MaxRetryCount)
+                stopwatch.Stop();
+                _logger.LogWarning(
+                    exception,
+                    "Gemini enrichment failed on attempt {Attempt}. Model={Model}, elapsedMs={ElapsedMs}, promptChars={PromptChars}, uncertainItems={UncertainItems}.",
+                    attempt + 1,
+                    _options.Model,
+                    stopwatch.ElapsedMilliseconds,
+                    promptLength,
+                    uncertainItems.Count);
+                if (attempt == _options.MaxRetryCount || !ShouldRetry(exception))
                 {
                     break;
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)), cancellationToken);
+                await Task.Delay(GetBackoff(attempt), cancellationToken);
             }
         }
 
@@ -127,10 +188,10 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
         };
     }
 
-    private static string BuildPrompt(OcrResult ocrResult, ReceiptParseResult parsedReceipt)
+    private static string BuildPrompt(OcrResult ocrResult, ReceiptParseResult parsedReceipt, IReadOnlyList<ReceiptItem> uncertainItems)
     {
         var schemaHint = """
-        Return only valid JSON with this shape:
+        Return raw JSON only with this shape. Do not wrap the response in markdown code fences:
         {
           "merchantName": "string|null",
           "taxId": "string|null",
@@ -141,22 +202,104 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
               "quantity": number|null,
               "unitPrice": number|null,
               "totalPrice": number|null,
+              "discount": number|null,
               "vatRate": "string|null",
-              "sourceLine": "string|null"
+              "sourceLine": "string|null",
+              "sourceLines": ["string"],
+              "reason": "string|null",
+              "correctedFrom": "string|null"
             }
           ]
         }
         """;
+
+        var relevantLines = ocrResult.NormalizedText
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(line => IsRelevantPromptLine(line, uncertainItems))
+            .Take(12)
+            .Select(line => new
+            {
+                text = line
+            })
+            .ToList();
+
+        if (relevantLines.Count == 0)
+        {
+            relevantLines = ocrResult.NormalizedText
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Take(8)
+                .Select(line => new
+                {
+                    text = line
+                })
+                .ToList();
+        }
 
         var currentDraft = JsonSerializer.Serialize(new
         {
             merchantName = parsedReceipt.Summary.MerchantName,
             taxId = parsedReceipt.Summary.TaxId,
             totalGross = parsedReceipt.Summary.TotalGross,
-            items = parsedReceipt.Items
+            uncertainItems = uncertainItems.Select(item => new
+            {
+                item.Name,
+                item.Quantity,
+                item.UnitPrice,
+                item.TotalPrice,
+                item.Discount,
+                item.SourceLines,
+                item.ParseWarnings
+            }),
+            paymentAndSummaryLines = relevantLines,
+            note = "Do not return payment lines, tax summary lines, totals or card/cash lines as receipt items."
         });
 
-        return $"{schemaHint}\nUse OCR text below to refine uncertain fields. Keep values conservative.\nOCR:\n{ocrResult.NormalizedText}\nDraft:\n{currentDraft}";
+        return $"{schemaHint}\nCorrect only uncertain items and do not invent missing products. Never classify payment methods, VAT summaries, subtotal lines, or terminal lines as items. Keep the declared total conservative and use OCR lines as the source of truth. If a correction would worsen the balance, leave the draft unchanged.\nDraft:\n{currentDraft}";
+    }
+
+    private static bool ShouldRetry(Exception exception)
+    {
+        if (exception is TaskCanceledException)
+        {
+            return false;
+        }
+
+        if (exception is HttpRequestException httpRequestException && httpRequestException.StatusCode is { } statusCode)
+        {
+            var numericStatusCode = (int)statusCode;
+            return numericStatusCode == 408 || numericStatusCode == 429 || numericStatusCode >= 500;
+        }
+
+        return false;
+    }
+
+    private static TimeSpan GetBackoff(int attempt) => attempt switch
+    {
+        0 => TimeSpan.FromSeconds(3),
+        1 => TimeSpan.FromSeconds(10),
+        _ => TimeSpan.FromSeconds(25)
+    };
+
+    private static bool IsRelevantPromptLine(string line, IReadOnlyList<ReceiptItem> uncertainItems)
+    {
+        var matchesItem = uncertainItems.Any(item =>
+            item.SourceLines.Any(source => source.Contains(line, StringComparison.OrdinalIgnoreCase) || line.Contains(source, StringComparison.OrdinalIgnoreCase))
+            || item.SourceLine.Contains(line, StringComparison.OrdinalIgnoreCase)
+            || line.Contains(item.Name, StringComparison.OrdinalIgnoreCase));
+
+        if (matchesItem)
+        {
+            return true;
+        }
+
+        return line.Contains("SUMA", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("TOTAL", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("PTU", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("VAT", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("KARTA", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("GOT", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("WP", StringComparison.OrdinalIgnoreCase)
+            || line.Contains("SPRZED", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? ExtractText(string json)
@@ -179,6 +322,151 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
         return parts[0].GetProperty("text").GetString();
     }
 
+    private static string ExtractJsonPayload(string responseText)
+    {
+        var sanitized = responseText.Trim();
+        if (sanitized.StartsWith("```", StringComparison.Ordinal))
+        {
+            sanitized = StripCodeFence(sanitized);
+        }
+
+        var firstBrace = sanitized.IndexOf('{');
+        var lastBrace = sanitized.LastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace)
+        {
+            sanitized = sanitized[firstBrace..(lastBrace + 1)];
+        }
+
+        return sanitized.Trim();
+    }
+
+    private static string StripCodeFence(string text)
+    {
+        var lines = text
+            .Split('\n', StringSplitOptions.TrimEntries)
+            .ToList();
+
+        if (lines.Count == 0)
+        {
+            return text;
+        }
+
+        if (lines[0].StartsWith("```", StringComparison.Ordinal))
+        {
+            lines.RemoveAt(0);
+        }
+
+        if (lines.Count > 0 && lines[^1].StartsWith("```", StringComparison.Ordinal))
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static string TruncateForLog(string value)
+    {
+        const int maxLength = 400;
+        return value.Length <= maxLength
+            ? value
+            : value[..maxLength] + "...";
+    }
+
+    private static IReadOnlyList<ReceiptItem> MergeItems(
+        IReadOnlyList<ReceiptItem> originalItems,
+        IReadOnlyList<GeminiPayloadItem>? enrichedItems)
+    {
+        if (enrichedItems is null || enrichedItems.Count == 0)
+        {
+            return originalItems;
+        }
+
+        var mergedItems = originalItems
+            .Select(CloneReceiptItem)
+            .ToList();
+
+        foreach (var enrichedItem in enrichedItems)
+        {
+            var mappedItem = MapGeminiItem(enrichedItem);
+            var matchIndex = FindMatchingItemIndex(mergedItems, enrichedItem, mappedItem);
+
+            if (matchIndex >= 0)
+            {
+                mergedItems[matchIndex] = mappedItem;
+            }
+        }
+
+        return mergedItems;
+    }
+
+    private static int FindMatchingItemIndex(
+        IReadOnlyList<ReceiptItem> items,
+        GeminiPayloadItem enrichedItem,
+        ReceiptItem mappedItem)
+    {
+        for (var index = 0; index < items.Count; index++)
+        {
+            var item = items[index];
+            if (SourcesMatch(item, enrichedItem) || NamesMatch(item, mappedItem))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static bool SourcesMatch(ReceiptItem item, GeminiPayloadItem enrichedItem)
+    {
+        var enrichedSources = enrichedItem.SourceLines ?? [];
+        if (!string.IsNullOrWhiteSpace(enrichedItem.SourceLine))
+        {
+            enrichedSources = [.. enrichedSources, enrichedItem.SourceLine];
+        }
+
+        return enrichedSources.Any(source =>
+            item.SourceLines.Any(existing => string.Equals(existing, source, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(item.SourceLine, source, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool NamesMatch(ReceiptItem original, ReceiptItem candidate)
+    {
+        return string.Equals(original.Name, candidate.Name, StringComparison.OrdinalIgnoreCase)
+            && original.Quantity == candidate.Quantity;
+    }
+
+    private static ReceiptItem MapGeminiItem(GeminiPayloadItem item) =>
+        new()
+        {
+            Name = item.Name,
+            Quantity = item.Quantity,
+            UnitPrice = item.UnitPrice,
+            TotalPrice = item.TotalPrice,
+            Discount = item.Discount,
+            VatRate = item.VatRate,
+            Confidence = 0.82,
+            SourceLine = item.SourceLine ?? string.Join(" | ", item.SourceLines ?? []),
+            SourceLines = item.SourceLines ?? (item.SourceLine is null ? [] : [item.SourceLine]),
+            WasAiCorrected = !string.IsNullOrWhiteSpace(item.Reason) || !string.IsNullOrWhiteSpace(item.CorrectedFrom),
+            ParseWarnings = BuildWarnings(item)
+        };
+
+    private static ReceiptItem CloneReceiptItem(ReceiptItem item) =>
+        new()
+        {
+            Name = item.Name,
+            Quantity = item.Quantity,
+            UnitPrice = item.UnitPrice,
+            TotalPrice = item.TotalPrice,
+            Discount = item.Discount,
+            VatRate = item.VatRate,
+            Confidence = item.Confidence,
+            SourceLine = item.SourceLine,
+            SourceLines = item.SourceLines.ToArray(),
+            WasAiCorrected = item.WasAiCorrected,
+            ParseWarnings = item.ParseWarnings.ToArray()
+        };
+
     private sealed class GeminiPayload
     {
         public string? MerchantName { get; set; }
@@ -193,7 +481,27 @@ public sealed class GeminiAiEnrichmentService : IAiEnrichmentService
         public decimal? Quantity { get; set; }
         public decimal? UnitPrice { get; set; }
         public decimal? TotalPrice { get; set; }
+        public decimal? Discount { get; set; }
         public string? VatRate { get; set; }
         public string? SourceLine { get; set; }
+        public List<string>? SourceLines { get; set; }
+        public string? Reason { get; set; }
+        public string? CorrectedFrom { get; set; }
+    }
+
+    private static IReadOnlyList<string> BuildWarnings(GeminiPayloadItem item)
+    {
+        var warnings = new List<string>();
+        if (!string.IsNullOrWhiteSpace(item.Reason))
+        {
+            warnings.Add($"AI note: {item.Reason}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.CorrectedFrom))
+        {
+            warnings.Add($"Corrected from: {item.CorrectedFrom}");
+        }
+
+        return warnings;
     }
 }

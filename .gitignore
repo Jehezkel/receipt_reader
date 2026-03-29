@@ -6,3 +6,5 @@
 **/.angular/
 apps/ReceiptReader.Api/AppData/
 deploy/.env
+.cache/
+.env
