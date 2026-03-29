@@ -9,6 +9,7 @@
   - keep `receipt-api` internal
   - keep `receipt-ocr` internal
   - keep `postgres` internal
+- The Docker Compose stack should not publish host ports in Dokploy. Public exposure should be configured in Dokploy itself, otherwise port conflicts with other stacks are likely.
 - The web container proxies `/api` and `/uploads` to `receipt-api`, so the frontend can use the same public origin and usually does not need browser CORS at all.
 - If you decide to expose `receipt-api` publicly on a separate domain, set `CORS_ALLOWED_ORIGINS` to the exact web origin, for example `https://your-web-domain.example`.
 - With Dokploy and a random Traefik domain, you can leave `CORS_ALLOWED_ORIGINS` empty as long as only `receipt-web` is public.

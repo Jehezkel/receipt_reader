@@ -5,8 +5,8 @@ services:
       POSTGRES_DB: receipt_reader
       POSTGRES_USER: receipt_reader
       POSTGRES_PASSWORD: receipt_reader
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -17,8 +17,8 @@ services:
     environment:
       PORT: 8080
       OCR_LANGUAGE_HINT: pol+eng
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
 
   receipt-api:
     build:
@@ -38,8 +38,8 @@ services:
       Gemini__ApiKey: ${GEMINI_API_KEY:-}
       Gemini__Model: gemini-2.5-flash
       Gemini__TimeoutSeconds: 60
-    ports:
-      - "5186:8080"
+    expose:
+      - "8080"
     volumes:
       - receipt_uploads:/app/AppData/uploads
 
@@ -49,8 +49,8 @@ services:
       dockerfile: apps/receipt-reader-web/Dockerfile
     depends_on:
       - receipt-api
-    ports:
-      - "4200:80"
+    expose:
+      - "80"
 
 volumes:
   postgres_data:
